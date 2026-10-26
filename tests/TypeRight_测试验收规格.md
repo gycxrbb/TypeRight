@@ -1,17 +1,14 @@
-# TypeRight 测试验收规格：讲义黄金样本
+# TypeRight 测试验收规格：讲义黄金样本（v2.0）
 
-> 版本 v1.0 ｜ 对应 PRD：TypeRight（VSTO）
-> 本文档是验收测试的唯一事实来源。所有断言均已硬编码，可直接翻译为测试代码，禁止测试时临时目测判断。
+> 对应 PRD v2.0（指认式批量排版）。本文档是验收测试的唯一事实来源，所有断言均已硬编码，可直接翻译为测试代码，禁止临时目测判断。
 
 ---
 
 ## 1. 目的
 
-验证 TypeRight 对**纯直接格式堆叠的学术讲义**的端到端能力：
+验证 TypeRight 的核心旅程：**用户对原始讲义执行「同类选择 × 4 轮 + 公式转换 × 1 次」后，产出与黄金文件一致**；以及操作沉淀为方案后可对同类文档一键重放。
 
-> 输入 `tests/` 下的原始讲义 → 套用测试 Profile 一键智能排版 → 产出在字体与公式维度上与黄金文件 `初三数学代数终极讲义_字体统一版.docx` 一致，且内容、结构、强调格式零损失。
-
-黄金文件本身即由「三轮人工确认的批量排版（字体统一 + 公式转 OMML）」产生，视为业务正确性的定义。
+黄金文件 = 经人工三轮确认的批量排版结果（字体统一 + 公式转 OMML），视为业务正确性的定义。
 
 ---
 
@@ -22,128 +19,117 @@ TypeRight/
 └── tests/
     ├── 初三数学代数终极讲义_一元二次方程与二次函数大一统.docx   # 输入（原始版，1,016 KB）
     ├── 初三数学代数终极讲义_字体统一版.docx                       # 黄金（期望输出，1,026 KB）
-    ├── profiles/
-    │   └── golden-lecture.json                                   # 测试专用 Profile（见 §3）
     └── TypeRight.Tests/                                          # 测试工程
 ```
 
-- 所有断言以 `tests/` 相对路径寻址，测试输出写入 `tests/output/`，禁止改动两份资产原件
-- 输入文件存在性为测试前置条件，缺失即 fail 并提示文件名
+- 断言以 `tests/` 相对路径寻址；测试输出写 `tests/output/`；禁止改动两份资产原件
+- 每个 TC 默认从原始文件的全新副本开始，除非用例注明"接续"
 
 ---
 
-## 3. 测试专用 Profile（golden-lecture.json）
+## 3. 原始文件签名普查（同类选择命中数的硬编码依据）
 
-黄金文件只改了**字体族**和**公式形态**，字号/加粗/颜色全部保留源值。因此测试 Profile 使用 null 语义：
+原始文件 95 个非空段落，按首 run 有效签名（中文字体以 eastAsia 计，原始文件均未设置 eastAsia，实际渲染字体即西文字体名下的中文显示；签名比对以**有效值**为准）共 7 种：
 
-```json
-{
-  "id": "golden-lecture",
-  "name": "黄金样本测试",
-  "roles": {
-    "title":     { "eastAsiaFont": "楷体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null },
-    "heading1":  { "eastAsiaFont": "楷体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null },
-    "heading2":  { "eastAsiaFont": "黑体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null },
-    "body":      { "eastAsiaFont": "宋体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null },
-    "caption":   { "eastAsiaFont": "宋体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null },
-    "listItem":  { "eastAsiaFont": "宋体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null },
-    "tableText": { "eastAsiaFont": "宋体", "latinFont": "Times New Roman", "sizePt": null, "bold": null, "color": null }
-  },
-  "formula": { "convertPlainText": true, "mathFont": "Cambria Math" },
-  "mountWordStyles": false
-}
-```
+| 签名（西文字体 / 字号 / 加粗 / 颜色） | 段数 | 对应内容 |
+|---|---|---|
+| Microsoft YaHei / 20pt / 粗 / 1A365D | 1 | 文档主标题 |
+| Microsoft YaHei / 15pt / 粗 / 1A365D | 7 | 模块一 ~ 模块七 |
+| Microsoft YaHei / 12.5pt / 粗 / 2B6CB0 | 16 | 1.1 ~ 6.5 小节标题 |
+| Microsoft YaHei / 11pt / 常规 / 4A5568 | 1 | 副标题（「——涵盖讲义知识点梳理…」） |
+| Microsoft YaHei / 9pt / 常规 / 718096 | 6 | 【图解例图】图注 |
+| SimSun / 继承 / 粗 / 1E1E1E | 43 | ①②③要点、【】条例段 |
+| SimSun / 继承 / 常规 / 无颜色 | 21 | 纯正文段 |
 
-**null 语义（必须实现）**：字段为 null = 不触碰该属性的源值。本 Profile 下插件只准改字体族与公式，任何字号/加粗/颜色变动都视为 bug。
-`mountWordStyles: false`：黄金文件未挂样式，本测试不要求挂载（挂载能力由独立用例覆盖，见 TC-09）。
+另：表格 11 张、图片 6 张（word/media/*）。
 
 ---
 
-## 4. 黄金文件事实表（断言的硬编码依据）
+## 4. 黄金文件事实表
 
 ### 4.1 总量指标
 
 | 指标 | 输入文件 | 黄金文件 |
 |---|---|---|
 | 非空段落数 | 95 | 95 |
-| 表格数 | 11 | 11 |
-| 图片数（word/media/*） | 6 | 6 |
+| 表格数 / 图片数 | 11 / 6 | 11 / 6 |
 | `m:oMath` 公式对象数 | 0 | **255** |
-| 其中 `m:f`（分式） | 0 | 25 |
-| 其中 `m:rad`（根式） | 0 | 7 |
+| 其中 `m:f`（分式）/ `m:rad`（根式） | 0 / 0 | 25 / 7 |
 | 上下标结构 `m:sSub`+`m:sSup`+`m:sSubSup` | 0 | 201 |
-| 普通文本 run（w:t）中 Unicode 上下标/根号字符（`⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ₀₁₂₃₄√`）总数 | 194 | **0** |
+| w:t 中 Unicode 上下标/根号字符（`⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ₀₁₂₃₄√`）总数 | 194 | **0** |
 
-### 4.2 角色判定锚点（按段落文本前缀搜索定位）
+### 4.2 字体断言锚点（按段落文本前缀定位，禁用段落索引）
 
-| 锚点：段落文本前缀 | 期望角色 | 期望中文字体（NameFarEast） | 字号/颜色（应保持源值） |
+| 锚点：段落文本前缀 | NameFarEast | NameAscii | 字号/颜色（必须保持源值） |
 |---|---|---|---|
-| `初三数学代数终极大统领：` | title | 楷体 | 20pt / 加粗 / #1A365D |
-| `模块一：一元二次方程的本质` ~ `模块七：九年级上册代数综合`（共 7 段，前缀 `模块`） | heading1 | 楷体 | 15pt / 加粗 / #1A365D |
-| `1.1 一元二次方程的标准定义` 等全部 `^\d\.\d\s` 段（共 16 段：1.1 1.2 2.1 2.2 3.1 4.1 4.2 4.3 5.1 5.2 5.3 6.1 6.2 6.3 6.4 6.5） | heading2 | 黑体 | 12.5pt / 加粗 / #2B6CB0 |
-| `【判定准则】一元二次方程必须同时满足` | body | 宋体 | 源值：段首加粗 / #1E1E1E |
-| `解一元二次方程的灵魂是` | body | 宋体 | 源值：常规 |
-| `【图解例图】` 前缀段（共 6 段） | caption | 宋体 | 9pt / #718096 |
-| 全部 11 个表格内所有 run | tableText | 宋体 | 源值 |
+| `初三数学代数终极大统领：` | 楷体 | Times New Roman | 20pt / 粗 / 1A365D |
+| `模块` 前缀 7 段 | 楷体 | Times New Roman | 15pt / 粗 / 1A365D |
+| `1.1 `~`6.5 ` 前缀 16 段 | 黑体 | Times New Roman | 12.5pt / 粗 / 2B6CB0 |
+| `【判定准则】` 等 43 个加粗要点段 | 宋体 | Times New Roman | 源值：粗 / 1E1E1E 保留 |
+| `解一元二次方程的灵魂是` 等 21 个纯正文段 | 宋体 | Times New Roman | 源值 |
+| `【图解例图】` 前缀 6 段 + 副标题 1 段 | 宋体 | Times New Roman | 9pt / 718096 与 11pt / 4A5568 |
+| 全部 11 个表格内每一个 run | 宋体 | Times New Roman | 源值 |
 
-角色计数断言：**楷体段落 = 8（1 主标题 + 7 模块），黑体段落 = 16，其余正文类均为宋体。**
+**计数断言：楷体段 = 8，黑体段 = 16，正文类宋体段 = 71（64 SimSun 系 + 7 YaHei 系）；11 张表格内全部 run 宋体 + TNR；公式 run 全部 Cambria Math。8+16+71 = 95，与非空段落总数吻合。**
 
-### 4.3 公式结构锚点（在产出 docx 的 document.xml 上断言）
+### 4.3 公式结构锚点（产出 docx 的 document.xml 上断言）
 
 | 锚点段落（文本前缀） | 必须存在的 OMML 结构 |
 |---|---|
-| `① 不等实根：` | `m:f`，其 `m:num` 含 `m:rad`（radicand 为 `Δ`）与 `±`，`m:den` 文本为 `2a` |
-| `【公式核心】` | `m:sSub` 结构表达 `x₁`、`x₂`；两个 `m:f`，den 分别为 `a`、`a` |
-| `2. 差方公式：` | `m:sSubSup`（底 x，sub 1，sup 2）；`m:f` 的 num 为 `m:rad`(Δ)、den 含 `|a|` |
-| `【弦长秒杀公式】` | `m:rad` 的 radicand 内含 `m:sSup`（`(x₁+x₂)²`）；`m:f`（√Δ / \|a\|） |
-| 表格「公式法」行（含文本 `当 Δ ≥ 0`） | 单元格内存在 `m:f`，num 含 `m:rad`(Δ) |
+| `① 不等实根：` | `m:f`，`m:num` 含 `m:rad`（radicand 为 `Δ`）与 `±`，`m:den` 文本 `2a` |
+| `【公式核心】` | `m:sSub` 表达 `x₁`、`x₂`；两个 `m:f`，den 均为 `a` |
+| `2. 差方公式：` | `m:sSubSup`（底 x，sub 1，sup 2）；`m:f` 的 num 为 `m:rad`(Δ)、den 含 `\|a\|` |
+| `【弦长秒杀公式】` | `m:rad` 内含 `m:sSup`（`(x₁+x₂)²`）；`m:f`（√Δ / \|a\|） |
+| 表格「公式法」行（含文本 `当 Δ ≥ 0`） | 单元格内 `m:f`，num 含 `m:rad`(Δ) |
 
-### 4.4 不得转换的内容（负向断言）
+### 4.4 负向断言（不得转换）
 
-以下片段**必须保持普通文本**，不得变成 oMath：
-- 小节编号 `1.1`~`6.5` 本体
-- `减少 70%`、`90% 都在考查`、`平均耗时 15 秒`、`压缩至 2 分钟` 中的纯数字与百分数
-- `（地面原点 vs 顶点原点）` 中的 `vs`
-- 流程箭头 `➔`（出现在 `审题 ➔ 设元 ➔ 列式`）、圈号 `①②③`
+以下必须保持普通文本：小节编号 `1.1`~`6.5` 本体；`减少 70%`、`90% 都在考查`、`平均耗时 15 秒` 中的纯数字与百分数；`（地面原点 vs 顶点原点）` 中的 `vs`；流程箭头 `➔`；圈号 `①②③`。
 
 ---
 
 ## 5. 测试用例
 
-> 测试工程建议：`TypeRight.Tests` 控制台或 MSTest；排版动作通过插件引擎（或直接 Interop 调用插件 API）执行后**另存**到 `tests/output/actual.docx`；文件级断言用 Open XML SDK 读取，运行态断言用 Interop。
+> 测试工程：`TypeRight.Tests`（MSTest 或控制台）。运行态断言用 Interop/NetOffice（`Range.Font.NameFarEast` 等），文件级断言用 Open XML SDK 读 `tests/output/` 下的产出。
 
-### TC-01 角色识别准确率
-**Given** 原始讲义 **When** 仅运行角色识别（不排版）**Then** §4.2 全部锚点段落的角色判定与期望一致；角色计数：title=1、heading1=7、heading2=16、caption=6；错判段落数 = 0。
+### 5.1 同类选择
 
-### TC-02 字体族应用（核心）
-**Given** 原始讲义 **When** 套 golden-lecture 一键排版并另存 **Then** 对产出文件逐 run 断言：
-- §4.2 各锚点段落所有 run：`Font.NameFarEast` = 期望中文字体，且 `Font.NameAscii` = `Times New Roman`（XML 层断言：`w:rFonts/@w:eastAsia`、`@w:ascii`、`@w:hAnsi`）
-- 11 个表格内**每一个** run：`eastAsia=宋体`、`ascii=hAnsi=Times New Roman`
-- 全部 255 个 oMath 内的 run：`ascii=hAnsi=Cambria Math`
+- **TC-01 严格模式**：光标置于「模块一：」段 → 同类选择 → **恰好命中 7 段**（模块一~七），不含主标题
+- **TC-02 宽松模式-忽略字号**：同一样本勾选「忽略字号」→ **恰好命中 8 段**（含主标题）
+- **TC-03 小节标题**：光标置于「1.1 」段，严格模式 → **恰好命中 16 段**
+- **TC-04 正文系**：① 光标置于「解一元二次方程的灵魂是」段，严格 → **恰好 21 段**；② 勾「忽略加粗 + 忽略颜色」→ **恰好 64 段**（43+21）；③ 光标置于图注段，勾「忽略字号 + 忽略颜色」→ **恰好 7 段**（6 图注 + 1 副标题）
+- **TC-05 空命中**：光标置于任意已通过前面用例改过字体的段落（签名全文唯一化后）→ 提示「仅当前段落」，无异常
 
-### TC-03 公式转换
-**Then** 产出文件满足 §4.1 总量指标：oMath = 255、m:f = 25、m:rad = 7、上下标结构 = 201（允许 ±2 的实现差异容差，超出即 fail 并输出差异清单）；w:t 中 Unicode 上下标/根号字符数 = 0；§4.3 全部结构锚点命中；§4.4 负向断言全部通过。
+### 5.2 格式应用与联动
 
-### TC-04 内容零损失
-**Then** 产出与输入对比：非空段落数 95 不变；表格 11 不变；图片 6 不变；提取全文中文字符流（剔除公式 run 与空白）逐字相等——**一个汉字都不许丢**。
+- **TC-06 中西文联动**：TC-02 命中集设中文「楷体」→ 8 段全部 run：NameFarEast=楷体、NameAscii=NameOther=Times New Roman；**字号/加粗/颜色与源值逐一相等**（20pt 与 15pt、1A365D 均不变）
+- **TC-07 表格覆盖**：正文系规则（宋体）应用后，11 个表格内所有 run：宋体 + TNR
 
-### TC-05 源格式保持（null 语义）
-**Then** §4.2 各锚点的字号/加粗/颜色与输入文件逐段一致（20pt/15pt/12.5pt、#1A365D/#2B6CB0/#1E1E1E/#718096）；段首加粗标签（如 `【判定准则】`、`① 整式性：` 所在的 43 处 #1E1E1E 加粗 run）加粗与颜色全部保留。
+### 5.3 撤销与幂等
 
-### TC-06 单次撤销
-**When** 排版完成后执行一次 `Documents.Undo`（或 Ctrl+Z）**Then** 文档回到排版前状态：抽查 ¶0 的 NameFarEast 恢复为 `Microsoft YaHei`、oMath 计数回到 0。**整次排版必须是一个撤销单元。**
+- **TC-08 撤销粒度**：连续执行「模块改楷体」「小节改黑体」两步后，一次 Ctrl+Z → 仅小节回退为 YaHei，模块仍为楷体；再一次 Ctrl+Z → 模块也回退。每步独立撤销单元
+- **TC-09 幂等**：同一操作对已达标段落重复应用 → 改动数 = 0
 
-### TC-07 幂等
-**When** 对产出文件再次应用同一 Profile **Then** 报告改动数 = 0，且二次产出与一次产出在 document.xml 层面无差异（规范化后比较）。
+### 5.4 公式转换
 
-### TC-08 性能
-**Then** 从触发到另存完成 < 10s（本样本 11 页 / 255 公式，属小规模；另构造 100 页放大样本时同限）。
+- **TC-10**：公式转换后满足 §4.1 总量（oMath=255、m:f=25、m:rad=7、上下标=201，容差 ±2，超出即 fail 并输出差异清单）、w:t 中 Unicode 上下标字符 = 0、§4.3 结构锚点全中、§4.4 负向断言全过
+- **TC-11 失败安全**：构造括号不闭合片段（`y = a(x - h`）→ 该片段原样保留为文本、计入失败计数，其余公式照常转换，无异常
 
-### TC-09 样式挂载（独立 Profile）
-**Given** `mountWordStyles: true` 的 Profile **Then** 产出中 heading1 段落 `Paragraph.Style` = `标题 1`、heading2 = `标题 2`，导航窗格大纲可见 7+16 个条目；且样式定义本身携带对应中西文字体（改样式即全文联动）。
+### 5.5 端到端黄金旅程
 
-### TC-10 失败安全
-**When** 人为构造一个无法 BuildUp 的公式片段（如括号不闭合 `y = a(x - h`）**Then** 该片段原样保留为文本、计入统计的「转换失败」计数，其余公式照常转换，无异常抛出。
+- **TC-12 黄金旅程**：全新原始副本上按 PRD §3 旅程顺序执行 4 轮同类选择改字体 + 1 次公式转换 → 产出另存 `tests/output/actual.docx` → §4.1 ~ §4.4 全部断言通过
+- **TC-13 内容零损失**：actual.docx 与原始文件对比：非空段落 95、表格 11、图片 6 不变；全文中文字符流（剔除公式 run 与空白）逐字相等
+- **TC-14 源格式保持**：§4.2 各锚点字号/加粗/颜色与原始文件逐段一致；43 处 1E1E1E 加粗要点段加粗与颜色全部保留
+
+### 5.6 方案闭环
+
+- **TC-15 存为方案**：TC-12 旅程结束后存为方案「数学讲义」→ 生成 JSON 符合 PRD §8 Schema v2：4 条规则（15pt/粗/1A365D 忽略字号 → 楷体；12.5pt/粗/2B6CB0 → 黑体；catchAll → 宋体；公式开关 true）或语义等价结构
+- **TC-16 应用方案**：全新原始副本 → 应用「数学讲义」→ 结果与 TC-12 产出字体断言完全一致；统计报告各规则命中数 = 8 / 16 / 71 / 公式 255；未命中 = 0
+- **TC-17 方案幂等**：同一文档二次应用 → 改动数 = 0
+
+### 5.7 性能
+
+- **TC-18**：同类选择匹配（95 段 + 11 表格）< 1s；黄金旅程全程（含公式转换）< 10s
 
 ---
 
@@ -151,21 +137,19 @@ TypeRight/
 
 | 断言目标 | 推荐途径 |
 |---|---|
-| 字体（eastAsia/ascii） | Open XML SDK 读 `w:rPr/w:rFonts` 属性；运行态用 `Range.Font.NameFarEast / NameAscii` |
-| OMML 结构 | 解压产出 docx，对 `word/document.xml` 做 XPath（命名空间 `m` = `http://schemas.openxmlformats.org/officeDocument/2006/math`），如 `//m:oMath[.//m:rad and .//m:f]` |
-| 中文字符流对比 | 两文件各取 `w:t` 文本拼接，正则剔除公式 run 与空白后 `SequenceEqual` |
-| 段落定位 | 一律用「文本前缀匹配」（§4.2 锚点列），禁止用段落索引（空段落增删会漂移） |
-| 颜色断言 | `w:color/@w:val`，大写十六进制无 # 前缀（如 `1A365D`） |
-
----
+| 字体（eastAsia/ascii） | Open XML SDK 读 `w:rPr/w:rFonts`；运行态 `Range.Font.NameFarEast / NameAscii` |
+| OMML 结构 | 解压产出 docx，对 `word/document.xml` 做 XPath（`m` = `http://schemas.openxmlformats.org/officeDocument/2006/math`） |
+| 同类选择命中数 | 直接调用 SimilarSelector 的匹配 API 断言返回段落集合的文本前缀列表 |
+| 中文字符流对比 | 两文件 `w:t` 文本拼接，剔除公式 run 与空白后 `SequenceEqual` |
+| 段落定位 | 一律文本前缀匹配，禁用段落索引 |
+| 颜色 | `w:color/@w:val`，大写十六进制无 `#` |
 
 ## 7. 明确非验收项
 
-- **不要求**产出与黄金文件字节级一致（docx 打包时间戳、rsid 等必然不同）
-- **不要求**分页结果一致（字体度量受系统影响）
-- **不断言** LibreOffice/WPS 下的渲染效果（渲染差异是字体替代问题，非插件问题）
-- 黄金文件中 oMath 的具体内部嵌套形态不强制逐节点相等（BuildUp 与手工 OMML 结构合法等价即可），仅强制 §4.1 总量与 §4.3 结构锚点
+- 不要求产出与黄金文件字节级一致；不要求分页一致
+- 不断言 LibreOffice/WPS 渲染效果（字体替代问题非插件问题）
+- oMath 内部嵌套形态不强制逐节点相等（BuildUp 与手工 OMML 合法等价即可），仅强制 §4.1 总量与 §4.3 结构锚点
 
 ## 8. 通过标准
 
-TC-01 ~ TC-10 全绿 = 黄金样本验收通过。任一用例 fail 时输出：失败断言、期望/实际值、锚点定位（段落前缀或 XPath），禁止只报 "assert failed"。
+TC-01 ~ TC-18 全绿 = 黄金样本验收通过。任一用例 fail 时输出：失败断言、期望/实际值、锚点定位（段落前缀或 XPath），禁止只报 "assert failed"。

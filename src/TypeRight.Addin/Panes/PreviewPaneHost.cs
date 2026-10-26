@@ -61,12 +61,12 @@ namespace TypeRight.Addin.Panes
 
         public void OnConnection(NetOffice.ICOMObject application, NetOffice.OfficeApi._CustomTaskPane taskPane, object[] arguments)
         {
-            TypeRightAddin.Log("CTP OnConnection (任务窗格创建成功)");
+            TypeRightAddin.Log("CTP OnConnection（停靠任务窗格创建成功）");
             var addin = arguments != null && arguments.Length > 0 ? arguments[0] as TypeRightAddin : null;
             if (addin == null || addin.Controller == null) return;
             addin.Controller.AttachHost(this);
             PreviewControl.Bind(addin.Controller);
-            try { if (taskPane != null) taskPane.Width = 420; }
+            try { if (taskPane != null) taskPane.Width = 460; }
             catch { }
         }
 

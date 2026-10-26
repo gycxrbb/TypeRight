@@ -68,11 +68,12 @@ if ($isAdmin) {
     }
     try { $hkcu.DeleteSubKeyTree("Software\Microsoft\Office\Word\Addins\TypeRight.Connect") } catch { }
 
-    $hklm = [Microsoft.Win32.Registry]::LocalMachine
-    Register-DotNetClass $hklm "TypeRight.Connect" $addinClsid "TypeRight.Addin.TypeRightAddin" $dll $assemblyName
-    Register-DotNetClass $hklm $paneProgId $paneClsid "TypeRight.Addin.Panes.PreviewPaneHost" $dll $assemblyName
+    # 注意：传可写的 Classes 子键句柄（函数内用相对路径建键，直接传 HKLM 根会变成在根下建键）
+    $hklmClasses = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('Software\Classes', $true)
+    Register-DotNetClass $hklmClasses "TypeRight.Connect" $addinClsid "TypeRight.Addin.TypeRightAddin" $dll $assemblyName
+    Register-DotNetClass $hklmClasses $paneProgId $paneClsid "TypeRight.Addin.Panes.PreviewPaneHost" $dll $assemblyName
 
-    $addinKey = $hklm.CreateSubKey("Software\Microsoft\Office\Word\Addins\TypeRight.Connect")
+    $addinKey = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey("Software\Microsoft\Office\Word\Addins\TypeRight.Connect")
     Set-Reg $addinKey "FriendlyName" "TypeRight 智能排版"
     Set-Reg $addinKey "Description" "一键智能排版：角色识别 + 方案重排 + 公式转换（NetOffice，免 VSTO 运行时）"
     Set-Reg $addinKey "LoadBehavior" 3
@@ -80,10 +81,10 @@ if ($isAdmin) {
 }
 else {
     Write-Host "== 3/4 非管理员：HKCU 注册 ==" -ForegroundColor Cyan
-    $hkcu = [Microsoft.Win32.Registry]::CurrentUser
-    Register-DotNetClass $hkcu "TypeRight.Connect" $addinClsid "TypeRight.Addin.TypeRightAddin" $dll $assemblyName
-    Register-DotNetClass $hkcu $paneProgId $paneClsid "TypeRight.Addin.Panes.PreviewPaneHost" $dll $assemblyName
-    $addinKey = $hkcu.CreateSubKey("Software\Microsoft\Office\Word\Addins\TypeRight.Connect")
+    $hkcuClasses = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Classes', $true)
+    Register-DotNetClass $hkcuClasses "TypeRight.Connect" $addinClsid "TypeRight.Addin.TypeRightAddin" $dll $assemblyName
+    Register-DotNetClass $hkcuClasses $paneProgId $paneClsid "TypeRight.Addin.Panes.PreviewPaneHost" $dll $assemblyName
+    $addinKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Microsoft\Office\Word\Addins\TypeRight.Connect")
     Set-Reg $addinKey "FriendlyName" "TypeRight 智能排版"
     Set-Reg $addinKey "Description" "一键智能排版：角色识别 + 方案重排 + 公式转换（NetOffice，免 VSTO 运行时）"
     Set-Reg $addinKey "LoadBehavior" 3

@@ -15,8 +15,24 @@ namespace TypeRight.Addin
     [Guid("6C7C9713-51A1-4A55-8C0D-3A4E5F607182")]
     [ProgId("TypeRight.Connect")]
     [ComVisible(true)]
-    public sealed class TypeRightAddin : NetOffice.WordApi.Tools.COMAddin
+    public sealed class TypeRightAddin : NetOffice.WordApi.Tools.COMAddin,
+        NetOffice.OfficeApi.Native.ICustomTaskPaneConsumer
     {
+        // WordApi 基类未实现 ICustomTaskPaneConsumer（只有同名公有方法），补上显式接口实现，
+        // Word 才会在启动时把 CTP 工厂交给加载项 → NetOffice 基类逻辑负责创建任务窗格
+        void NetOffice.OfficeApi.Native.ICustomTaskPaneConsumer.CTPFactoryAvailable(object CTPFactoryInst)
+        {
+            Log("CTPFactoryAvailable（Word 提供任务窗格工厂）");
+            try
+            {
+                CTPFactoryAvailable(CTPFactoryInst); // 基类公有虚方法：创建 TaskPanes 定义的面板
+                Log("任务窗格创建流程完成");
+            }
+            catch (Exception ex)
+            {
+                Log("任务窗格创建失败（将回落浮动窗口）: " + ex.Message);
+            }
+        }
         private static readonly string LogFile = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TypeRight", "addin-log.txt");
 

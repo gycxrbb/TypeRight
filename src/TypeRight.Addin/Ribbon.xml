@@ -3,26 +3,26 @@
   <ribbon>
     <tabs>
       <tab id="tabTypeRight" label="智能排版">
-        <group id="grpTypeRightMain" label="TypeRight">
+        <group id="grpTypeRightMain" label="TypeRight 一键排版">
           <button id="btnFormatAll" size="large" label="一键智能排版"
-                  screentip="扫描全文，识别段落角色，预览确认后一键重排"
-                  supertip="先预览将发生的改动，确认后应用。整次操作可用一次 Ctrl+Z 撤销。"
+                  screentip="扫描当前文档并预览确认"
+                  supertip="自动识别标题 / 正文 / 图注 / 公式，预览确认后一键重排。&#10;&#10;首次使用建议先在面板里“生成示例文档”试一试。"
                   imageMso="AutoFormatNow"
                   onAction="OnFormatAll" />
           <button id="btnFormatSelection" size="normal" label="排版选区"
-                  screentip="仅处理选区内段落"
+                  screentip="仅处理选中的段落"
                   imageMso="SelectionPane"
                   onAction="OnFormatSelection" />
         </group>
         <group id="grpTypeRightProfiles" label="方案">
           <button id="btnProfiles" size="normal" label="方案管理"
-                  screentip="编辑 / 导入 / 导出排版方案"
+                  screentip="编辑 / 导入 / 导出排版方案（字体、字号、行距等规范）"
                   imageMso="StylesManageStyles"
                   onAction="OnProfiles" />
         </group>
         <group id="grpTypeRightSettings" label="设置">
           <button id="btnSettings" size="normal" label="设置"
-                  screentip="LLM 增强（默认关闭）、混排规则开关"
+                  screentip="LLM 智能识别增强（可选）、默认选项"
                   imageMso="FileDocumentEncryptPermission"
                   onAction="OnSettings" />
         </group>
