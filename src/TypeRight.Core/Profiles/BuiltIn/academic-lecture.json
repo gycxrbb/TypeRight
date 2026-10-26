@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "id": "academic-lecture",
+  "name": "学术讲义/论文",
+  "description": "首发内置方案：论文、课程报告、讲义通用。黑体标题+宋体正文+Times New Roman 西文，公式 Cambria Math。",
+  "roles": {
+    "title": {
+      "label": "文档主标题",
+      "eastAsiaFont": "黑体",
+      "latinFont": "Times New Roman",
+      "sizePt": 16,
+      "bold": true,
+      "color": "#1A365D",
+      "alignment": "center",
+      "wordStyle": "Title",
+      "spaceBeforePt": 12,
+      "spaceAfterPt": 12
+    },
+    "heading1": {
+      "label": "一级标题",
+      "eastAsiaFont": "黑体",
+      "latinFont": "Times New Roman",
+      "sizePt": 15,
+      "bold": true,
+      "color": "#1A365D",
+      "wordStyle": "Heading 1",
+      "outlineLevel": 1
+    },
+    "heading2": {
+      "label": "二级标题",
+      "eastAsiaFont": "黑体",
+      "latinFont": "Times New Roman",
+      "sizePt": 13,
+      "bold": true,
+      "color": "#2B6CB0",
+      "wordStyle": "Heading 2",
+      "outlineLevel": 2
+    },
+    "heading3": {
+      "label": "三级标题",
+      "eastAsiaFont": "黑体",
+      "latinFont": "Times New Roman",
+      "sizePt": 12,
+      "bold": true,
+      "wordStyle": "Heading 3",
+      "outlineLevel": 3
+    },
+    "body": {
+      "label": "正文",
+      "eastAsiaFont": "宋体",
+      "latinFont": "Times New Roman",
+      "sizePt": 10.5,
+      "lineSpacing": 1.5,
+      "firstLineIndentPt": 21,
+      "wordStyle": "Normal"
+    },
+    "caption": {
+      "label": "图注/表注",
+      "eastAsiaFont": "宋体",
+      "latinFont": "Times New Roman",
+      "sizePt": 9,
+      "color": "#595959",
+      "alignment": "center",
+      "wordStyle": "Caption"
+    },
+    "listItem": {
+      "label": "列表项",
+      "eastAsiaFont": "宋体",
+      "latinFont": "Times New Roman",
+      "sizePt": 10.5,
+      "wordStyle": "List Paragraph"
+    },
+    "tableText": {
+      "label": "表格文字",
+      "eastAsiaFont": "宋体",
+      "latinFont": "Times New Roman",
+      "sizePt": 9
+    },
+    "formulaLine": {
+      "label": "独立公式行",
+      "eastAsiaFont": "宋体",
+      "latinFont": "Times New Roman",
+      "sizePt": 10.5,
+      "alignment": "center"
+    }
+  },
+  "formula": {
+    "convertPlainText": true,
+    "mathFont": "Cambria Math",
+    "sizePt": 10.5
+  },
+  "mixingRules": {
+    "autoSpaceCjkLatin": false,
+    "unifyPunctuation": "none",
+    "digitsToLatinFont": true
+  }
+}

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>TypeRight</RootNamespace>
+    <AssemblyName>TypeRight.Core</AssemblyName>
+    <Version>0.1.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NetOfficeFw.Office" Version="1.9.*" />
+    <PackageReference Include="NetOfficeFw.Word" Version="1.9.*" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Profiles\BuiltIn\*.json" />
+  </ItemGroup>
+
+</Project>
