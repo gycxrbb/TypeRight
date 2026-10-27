@@ -107,6 +107,33 @@ namespace TypeRight.Acceptance
                 }
 
                 Console.WriteLine();
+                Console.WriteLine("══ 结构顺序矩阵 ─═");
+                foreach (int mode in new[] { 3 })
+                {
+                    TypeRight.Formatting.FormulaConverter.StructureOrderMode = mode;
+                    Document md = env.OpenCopy("matrix-" + mode);
+                    try
+                    {
+                        var ms = new TypeRight.Formatting.FormulaConverter(md, null, null).ConvertDocument();
+                        string saveMsg;
+                        try { md.SaveAs2(env.CopyPath("matrix-save-" + mode)); saveMsg = "保存OK"; }
+                        catch (Exception ex3) { saveMsg = "保存失败:" + ex3.Message.Substring(0, Math.Min(30, ex3.Message.Length)); }
+                        md.Close(false);
+                        using (var mx = DocXml.Load(env.CopyPath("matrix-save-" + mode)))
+                        {
+                            if (mx.OMathCount() == 0)
+                                Console.WriteLine("  mode" + mode + ": 转换" + ms.Converted + " 失败" + ms.Failed + " | " + saveMsg + " | (文件级统计不可用)");
+                            else
+                                Console.WriteLine("  mode" + mode + ": 转换" + ms.Converted + " 失败" + ms.Failed + " | " + saveMsg +
+                                    " | oMath=" + mx.OMathCount() + " m:f=" + mx.MathElementCount("f") + " m:rad=" + mx.MathElementCount("rad") +
+                                    " 上下标=" + (mx.MathElementCount("sSub") + mx.MathElementCount("sSup") + mx.MathElementCount("sSubSup")));
+                        }
+                    }
+                    catch (Exception ex4) { Console.WriteLine("  mode" + mode + " 外层异常: " + ex4.Message); try { md.Close(false); } catch { } }
+                }
+                TypeRight.Formatting.FormulaConverter.StructureOrderMode = 0;
+
+                Console.WriteLine();
                 Console.WriteLine("══ 公式缺口普查（真实讲义）══");
                 {
                     Document cd = env.OpenCopy("diag-census");
@@ -126,6 +153,12 @@ namespace TypeRight.Acceptance
                         var st = conv.ConvertDocument();
                         int after = cd.OMaths.Count;
                         Console.WriteLine("  候选片段=" + before + " 转换=" + st.Converted + " 失败=" + st.Failed + " oMath=" + after);
+                        try
+                        {
+                            cd.SaveAs2(env.CopyPath("census-save"));
+                            Console.WriteLine("  保存验证: OK mode=" + TypeRight.Formatting.FormulaConverter.StructureOrderMode);
+                        }
+                        catch (Exception ex2) { Console.WriteLine("  保存验证失败 mode=" + TypeRight.Formatting.FormulaConverter.StructureOrderMode + ": " + ex2.Message); }
 
                         // 我的公式区清单（与黄金差集用）：运行态读线性文本
                         {

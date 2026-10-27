@@ -80,6 +80,21 @@ namespace TypeRight.Formulas
             return spans;
         }
 
+        /// <summary>顶层（深度 0）斜杠个数。</summary>
+        public static int CountTopLevelSlashes(string linear)
+        {
+            if (linear == null) return 0;
+            int depth = 0, count = 0;
+            for (int i = 0; i < linear.Length; i++)
+            {
+                char c = linear[i];
+                if (c == '(' || c == '[' || c == '{') depth++;
+                else if (c == ')' || c == ']' || c == '}') depth--;
+                else if (c == '/' && depth == 0) count++;
+            }
+            return count;
+        }
+
         /// <summary>顶层 “num/den” 操作数 span（含斜杠）；无顶层斜杠返回 null。</summary>
         public static KeyValuePair<int, int>? FractionSpan(string linear)
         {

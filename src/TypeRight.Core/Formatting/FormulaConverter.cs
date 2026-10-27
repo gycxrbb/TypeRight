@@ -32,6 +32,10 @@ namespace TypeRight.Formatting
         private readonly double? _mathSizePt;
         private readonly string _mml2OmmlPath;
 
+        /// <summary>结构构建顺序（验收调试矩阵）：0=Rad→Frac→BuildUp（可保存/脚本缺）；
+        /// 1=BuildUp→Rad→Frac（结构全/保存崩）；2=Rad→BuildUp→Frac。</summary>
+        public static int StructureOrderMode;
+
         public FormulaConverter(Document doc, double? mathSizePt = null, string mml2OmmlXslPath = null)
         {
             if (doc == null) throw new ArgumentNullException("doc");
@@ -208,36 +212,79 @@ namespace TypeRight.Formatting
             OMath om = ZoneMath(mathRange);
             if (om == null) throw new InvalidOperationException("未取到公式对象。");
 
-            // 先 BuildUp：构建上下标（结构体创建后 BuildUp 不再作用于其内部，探针实证）
-            om.BuildUp();
-
-            // 根式：基于插入文本的 span（区间随内容变化自动跟随），从右到左
-            foreach (var span in StructuredMath.RadicalSpans(work))
+            Action buildUp = () => { try { om.BuildUp(); } catch { } };
+            Action rad = () =>
             {
-                try
+                foreach (var span in StructuredMath.RadicalSpans(work))
                 {
-                    Range sub = _doc.Range(zoneStart + span.Key, zoneStart + span.Value);
-                    om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionRad);
+                    try
+                    {
+                        Range sub = _doc.Range(zoneStart + span.Key, zoneStart + span.Value);
+                        om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionRad);
+                    }
+                    catch { }
                 }
-                catch { }
-            }
-
-            // 顶层分式：只圈 “num/den” 操作数 span（避免把 x = 之类前缀卷进分子）
-            var fracSpan = StructuredMath.FractionSpan(work);
-            if (fracSpan.HasValue)
+            };
+            Action frac = () =>
             {
-                try
+                var fracSpan = StructuredMath.FractionSpan(work);
+                if (fracSpan.HasValue)
                 {
-                    Range sub = _doc.Range(zoneStart + fracSpan.Value.Key, zoneStart + fracSpan.Value.Value);
-                    om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionFrac);
+                    try
+                    {
+                        Range sub = _doc.Range(zoneStart + fracSpan.Value.Key, zoneStart + fracSpan.Value.Value);
+                        om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionFrac);
+                    }
+                    catch { }
                 }
+            };
+
+            Action fracWhole = () =>
+            {
+                try { om.Functions.Add(om.Range, WdOMathFunctionType.wdOMathFunctionFrac); }
                 catch { }
+            };
+            Action noBuild = () => { };
+
+            // 最终策略（矩阵实证）：
+            // 有顶层斜杠 → Rad(生文本)→Frac(整区,循环至无斜杠)→BuildUp（分式必须吃生文本，否则产物非法不可保存）
+            // 无斜杠 → BuildUp(脚本全建,含√组内)→Rad（对已建内容包根式,验证可保存）
+            int expectedFracs = StructuredMath.CountTopLevelSlashes(work);
+            Action fracLoop = () =>
+            {
+                for (int i = 0; i < expectedFracs; i++)
+                {
+                    try { om.Functions.Add(om.Range, WdOMathFunctionType.wdOMathFunctionFrac); }
+                    catch { break; }
+                }
+            };
+            bool hasSlash = StructuredMath.TopLevelSlashIndex(work) >= 0;
+            switch (StructureOrderMode)
+            {
+                case 0: case 3:
+                    if (hasSlash) { rad(); fracLoop(); buildUp(); }
+                    else { buildUp(); rad(); }
+                    break;
+                case 1: buildUp(); rad(); fracWhole(); break;
+                case 2: rad(); buildUp(); frac(); break;
+                case 5: buildUp(); rad(); fracWhole(); break;
+                default:
+                    if (hasSlash) { rad(); fracLoop(); buildUp(); }
+                    else { buildUp(); rad(); }
+                    break;
             }
 
             int after = SafeMathCount(rng);
             if (after <= mathCountBefore) throw new InvalidOperationException("公式对象未建立。");
             ApplyMathSize(om);
             return true;
+        }
+
+
+        private static string ZoneTextSafe(OMath om)
+        {
+            try { return om.Range.Text ?? ""; }
+            catch { return ""; }
         }
 
         private static OMath ZoneMath(Range mathRange)
