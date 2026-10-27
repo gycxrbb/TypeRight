@@ -13,6 +13,7 @@ namespace TypeRight.Acceptance
     /// </summary>
     internal static class Program
     {
+        [STAThread]
         private static int Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
@@ -26,6 +27,24 @@ namespace TypeRight.Acceptance
             if (filter == "diag")
             {
                 Diag.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return 0;
+            }
+            if (filter == "fb")
+            {
+                DiagFb.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return 0;
+            }
+            if (filter == "rpr")
+            {
+                DiagRpr.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return 0;
+            }
+            if (filter == "clip")
+            {
+                DiagClip.Run(env);
                 try { app.Quit(); app.Dispose(); } catch { }
                 return 0;
             }
@@ -74,6 +93,8 @@ namespace TypeRight.Acceptance
                 new KeyValuePair<string, Action<TestEnv>>("TC-16", e => { e.RecycleWord(); CasesC.TC16(e); }),
                 new KeyValuePair<string, Action<TestEnv>>("TC-17", e => { e.RecycleWord(); CasesC.TC17(e); }),
                 new KeyValuePair<string, Action<TestEnv>>("TC-18", e => { e.RecycleWord(); CasesC.TC18(e); }),
+                new KeyValuePair<string, Action<TestEnv>>("TC-19", e => { e.RecycleWord(); CasesD.TC19(e); }),
+                new KeyValuePair<string, Action<TestEnv>>("TC-20", e => { e.RecycleWord(); CasesD.TC20(e); }),
                                                             };
 
             int executed = 0;

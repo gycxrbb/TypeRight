@@ -32,6 +32,14 @@ namespace TypeRight.Formatting
         private readonly double? _mathSizePt;
         private readonly string _mml2OmmlPath;
 
+        /// <summary>回退记录（验收调试用）。</summary>
+        public static readonly System.Collections.Generic.List<string> FallbackLog = new System.Collections.Generic.List<string>();
+
+        private static void RecordFallback(string reason)
+        {
+            if (FallbackLog.Count < 60) FallbackLog.Add(reason);
+        }
+
         /// <summary>结构构建顺序（验收调试矩阵）：0=Rad→Frac→BuildUp（可保存/脚本缺）；
         /// 1=BuildUp→Rad→Frac（结构全/保存崩）；2=Rad→BuildUp→Frac。</summary>
         public static int StructureOrderMode;
@@ -83,11 +91,14 @@ namespace TypeRight.Formatting
                 if (p == null) continue;
                 ConvertParagraph(p, stats);
             }
+
+            // 二遍清扫：补转区间指针漂移残留的纯文本片段（残留 Unicode 上下标字符清零）
+            SweepLeftovers(stats);
             return stats;
         }
 
         /// <summary>转换单个段落内的公式片段。wholeLine=true 时转换整段（独立公式行场景）。</summary>
-        public void ConvertParagraph(Paragraph paragraph, FormulaStats stats, bool wholeLine = false)
+        public void ConvertParagraph(Paragraph paragraph, FormulaStats stats, bool wholeLine = false, bool secondPass = false)
         {
             if (paragraph == null || stats == null) return;
 
@@ -101,6 +112,10 @@ namespace TypeRight.Formatting
 
             string trimmed = liveText.TrimEnd('\r', '\a', '\v');
             if (trimmed.Trim().Length == 0) return;
+
+            bool inTable = false;
+            try { inTable = Convert.ToBoolean(paragraph.Range.get_Information(WdInformation.wdWithInTable)); }
+            catch { }
 
             List<MathSegmenter.Segment> segments;
             if (wholeLine)
@@ -145,6 +160,104 @@ namespace TypeRight.Formatting
                         stats.FailedLocations.Add("¶" + ParagraphIndex(paragraph) + "  " + (original.Length > 30 ? original.Substring(0, 30) + "…" : original));
                 }
             }
+
+            // TC-20（P0）：公式构建会重写单元格 run 的 rPr，w:sz 等显式属性在序列化层丢失
+            // （运行时有效值不变，仅 document.xml 缺标签）。对表格段非公式 run 强制显式回写，
+            // 恢复 w:sz/w:b/w:color/w:rFonts 显式序列化。
+            if (inTable) ForceExplicitRunProps(paragraph);
+        }
+
+        /// <summary>二遍清扫：区间指针漂移（粘贴/撤销副作用）可能残留未转的纯文本片段，补转。</summary>
+        public void SweepLeftovers(FormulaStats stats)
+        {
+            var all = new List<Paragraph>();
+            foreach (Paragraph p in _doc.Paragraphs) all.Add(p);
+            foreach (Paragraph p in all)
+            {
+                ConvertParagraph(p, stats, secondPass: true);
+            }
+        }
+
+        /// <summary>对段落内非公式（数学区外）的可见文本区间强制显式写入 rPr（读后原值回写）。</summary>
+        private void ForceExplicitRunProps(Paragraph paragraph)
+        {
+            try
+            {
+                Range whole = paragraph.Range;
+                int mathCount;
+                try { mathCount = whole.OMaths.Count; } catch { mathCount = 0; }
+                if (mathCount == 0) return;
+
+                // 数学区边界 → 非公式子区间
+                var bounds = new List<KeyValuePair<int, int>>();
+                for (int i = 1; i <= mathCount; i++)
+                {
+                    try
+                    {
+                        Range mr = whole.OMaths[i].Range;
+                        bounds.Add(new KeyValuePair<int, int>(mr.Start, mr.End));
+                    }
+                    catch { }
+                }
+                bounds.Sort((a, b) => a.Key.CompareTo(b.Key));
+
+                var gaps = new List<Range>();
+                int start = whole.Start;
+                foreach (var b in bounds)
+                {
+                    if (b.Key > start)
+                    {
+                        Range gap = whole.Duplicate;
+                        gap.Start = start;
+                        gap.End = b.Key;
+                        if (HasVisible(gap)) gaps.Add(gap);
+                    }
+                    if (b.Value > start) start = b.Value;
+                }
+                if (whole.End > start)
+                {
+                    Range tail = whole.Duplicate;
+                    tail.Start = start;
+                    tail.End = whole.End;
+                    if (HasVisible(tail)) gaps.Add(tail);
+                }
+
+                foreach (Range g in gaps)
+                {
+                    try
+                    {
+                        Font f = g.Font;
+                        // 读后原值回写：强制 Word 序列化出显式 w:rFonts/w:sz/w:b/w:i/w:color
+                        string fe = f.NameFarEast; if (!string.IsNullOrEmpty(fe)) f.NameFarEast = fe;
+                        string la = f.NameAscii; if (!string.IsNullOrEmpty(la)) f.NameAscii = la;
+                        string lo = f.NameOther; if (!string.IsNullOrEmpty(lo)) f.NameOther = lo;
+                        float sz = f.Size;
+                        if (sz > 0 && sz < WordFormatUtils.UndefinedFloat) f.Size = sz;
+                        int bold = f.Bold;
+                        if (bold == -1 || bold == 0) f.Bold = bold;
+                        int ital = f.Italic;
+                        if (ital == -1 || ital == 0) f.Italic = ital;
+                        int col = (int)f.Color;
+                        if (col >= 0 && col <= 0xFFFFFF) f.Color = (WdColor)col;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        private static bool HasVisible(Range r)
+        {
+            try
+            {
+                string t = r.Text ?? "";
+                foreach (char ch in t)
+                {
+                    if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　') return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         private static int ParagraphIndex(Paragraph p)
@@ -167,11 +280,23 @@ namespace TypeRight.Formatting
             string mapped = UnicodeMathMapper.NormalizeMathAlphanumerics(UnicodeMathMapper.Map(originalText));
             int mathCountBefore = 0;
             try { mathCountBefore = rng.OMaths.Count; } catch { }
+            int docZonesBefore = 0;
+            try { docZonesBefore = _doc.OMaths.Count; } catch { }
 
             try
             {
+                // TC-19 管线（PRD §6.2.1）：MathML → 剪贴板 → 粘贴注入（嵌套结构完整）
+                string mml = null;
+                try { mml = MathMLBuilder.Build(mapped); }
+                catch (Exception bex) { RecordFallback("BUILD:" + mapped + " @" + bex.Message); }
+                if (mml != null)
+                {
+                    if (MathmlInjector.TryInject(_doc.Application, _doc, rng, mml)) return true;
+                    RecordFallback("INJECT:" + mapped);
+                }
+
                 if (StructuredMath.NeedsStructure(mapped))
-                    return ConvertStructured(rng, mapped, mathCountBefore);
+                    return ConvertStructured(rng, mapped, mathCountBefore, docZonesBefore);
                 return ConvertPlain(rng, mapped, mathCountBefore);
             }
             catch
@@ -202,7 +327,7 @@ namespace TypeRight.Formatting
         /// 走 OMathFunctions.Add(Frac/Rad)：规范化分式括号 → 建区 → 根式 span 从右到左
         /// 逐个 Rad → 顶层 Frac → BuildUp 收尾剩余脚本。
         /// </summary>
-        private bool ConvertStructured(Range rng, string mapped, int mathCountBefore)
+        private bool ConvertStructured(Range rng, string mapped, int mathCountBefore, int docZonesBefore = 0)
         {
             string work = StructuredMath.NormalizeFractionParens(mapped);
             if (!string.IsNullOrEmpty(work)) rng.Text = work;

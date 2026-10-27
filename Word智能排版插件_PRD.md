@@ -156,9 +156,16 @@ TypeRight/
 3. 片段 Range 送入 `OMaths.Add()` 新建的 OMath，`OMath.BuildUp` 转专业格式
 4. 转换失败的片段**原样保留为文本**并计入统计，绝不留半转换残骸
 
-### 6.2.1 兜底管线：MathML → OMML
+### 6.2.1 分式构造路径：MML2OMML 管线（v0.1 验收后升级为主路径）
 
-`BuildUp` 无法处理的复杂片段（嵌套分式、矩阵、多层根号），走 Office 自带 **`MML2OMML.XSL`**：线性文本 → MathML → XSLT → OMML 注入。零第三方依赖；formulyword 项目已验证该管线。封装为 `FormulaConverter` 的 fallback 分支。
+**实测结论（黄金样本验收）**：`OMathFunctions.Add(Frac)` 只接受生文本，`BuildUp` 不进入分式内部递归——分子/分母内含上下标或根式时退化为平铺文本（实测丢失 49 个上下标结构）；对已 BuildUp 内容建分式产物非法，`Range.InsertXML` 各变体均被 Word 拒绝。
+
+因此规定：
+- **不含分式的片段**：仍走 §6.2 线性输入 + BuildUp
+- **凡含分式的片段**：走 MML2OMML 管线——线性文本 → MathML → Office 自带 `MML2OMML.XSL` → **经剪贴板 MathML 格式粘贴注入**（非 InsertXML；剪贴板粘贴为已验证可行路径，formulyword 同方案）
+- 其余 BuildUp 无法处理的复杂结构（矩阵、多层嵌套）同走此管线
+
+优先级 P1，验收标准见测试规格 TC-19。
 
 ### 6.3 切分规则
 

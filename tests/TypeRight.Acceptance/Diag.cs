@@ -153,6 +153,10 @@ namespace TypeRight.Acceptance
                         var st = conv.ConvertDocument();
                         int after = cd.OMaths.Count;
                         Console.WriteLine("  候选片段=" + before + " 转换=" + st.Converted + " 失败=" + st.Failed + " oMath=" + after);
+                        foreach (string fb in TypeRight.Formatting.FormulaConverter.FallbackLog.Take(20))
+                            Console.WriteLine("    回退: " + fb);
+                        Console.WriteLine("    回退总数: " + TypeRight.Formatting.FormulaConverter.FallbackLog.Count);
+
                         try
                         {
                             cd.SaveAs2(env.CopyPath("census-save"));
