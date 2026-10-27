@@ -51,7 +51,7 @@ dotnet test TypeRight.sln                      # 40 单测
 dotnet run --project src\TypeRight.SmokeTest   # 真实 Word 端到端（黄金旅程）
 ```
 
-**性能**：冒烟测试经进程外 DCOM 运行（每 COM 调用 ~1ms 编组开销，~14ms/段）；插件实际运行在 Word 进程内（直调）。进程内实测看 `%LOCALAPPDATA%\TypeRight\addin-log.txt` 的「同类匹配: N 段 / Xms」日志行——PRD 验收口径以该日志为准。
+**性能**：进程内实测（1000 段文档 + addin-log 计时）**同类匹配 532ms**，达 PRD 验收线（<1s）。两个关键实现点：段落遍历必须用枚举器（`Paragraphs[i]` 索引器是 O(n) 重扫，千段 O(n²)≈9s）；对齐读取走探针区间的 `ParagraphFormat`（段落代理的 `Paragraph.Alignment` 实测 ~1.5ms/次）。耗时分解埋点见 `FormatSignatureReader.Ticks*`，随 `同类匹配` 日志行输出。冒烟测试因走进程外 DCOM 仅作参考值。
 
 ## 已知边界（P1/P2）
 
