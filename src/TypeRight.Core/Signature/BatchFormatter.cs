@@ -146,13 +146,8 @@ namespace TypeRight.Signature
 
                 if (guardSize)
                 {
-                    try
-                    {
-                        float after = f.Size;
-                        if (after >= WordFormatUtils.UndefinedFloat || Math.Abs(after - beforeSize) > 0.05f)
-                            f.Size = beforeSize;
-                    }
-                    catch { }
+                    // 无条件回写：rPr 在序列化时可能丢弃 w:sz（API 读不出），已知字号一律显式回写
+                    try { f.Size = beforeSize; } catch { }
                 }
 
                 // 幂等计数：before 为已知一致值且 after 不同才计改动；
