@@ -39,6 +39,10 @@ namespace TypeRight.Signature
     /// </summary>
     public static class BatchFormatter
     {
+        /// <summary>幂等计数探针（验收调试用）。</summary>
+        public static bool DiagCount;
+        internal static int _diagPrinted;
+
         public static BatchStats Apply(Application app, Document doc, IList<Paragraph> paragraphs, FormatChanges changes,
             string undoName, bool wrapUndo = true)
         {
@@ -156,9 +160,22 @@ namespace TypeRight.Signature
                 string afterFE = SafeFontName(f.NameFarEast);
                 string afterAscii = SafeFontName(f.NameAscii);
                 float afterSize2 = SafeSize(f.Size);
-                if (beforeFE != null && !string.Equals(beforeFE, afterFE, StringComparison.OrdinalIgnoreCase)) changed = true;
-                else if (beforeAscii != null && !string.Equals(beforeAscii, afterAscii, StringComparison.OrdinalIgnoreCase)) changed = true;
-                else if (beforeSize > 0 && Math.Abs(beforeSize - afterSize2) > 0.05f) changed = true;
+                // 只对本次写入过的维度计改动；读数为混合（null，写后同代理常见陈旧值）一律不计
+                bool feDiff = c.EastAsiaFont != null && beforeFE != null && afterFE != null && !string.Equals(beforeFE, afterFE, StringComparison.OrdinalIgnoreCase);
+                                bool asciiDiff = c.LatinFont != null && beforeAscii != null && afterAscii != null
+                                        && !string.Equals(beforeAscii, afterAscii, StringComparison.OrdinalIgnoreCase)
+                                        && !string.Equals(beforeAscii, "Cambria Math", StringComparison.OrdinalIgnoreCase)
+                                        && !string.Equals(afterAscii, "Cambria Math", StringComparison.OrdinalIgnoreCase);
+                bool sizeDiff = c.SizePt.HasValue && beforeSize > 0 && afterSize2 > 0 && Math.Abs(beforeSize - afterSize2) > 0.05f;
+                if (feDiff || asciiDiff || sizeDiff)
+                {
+                    changed = true;
+                    if (DiagCount && _diagPrinted < 8)
+                    {
+                        _diagPrinted++;
+                        System.Console.WriteLine("    [idem-probe] FE[" + beforeFE + "]->[" + afterFE + "] Ascii[" + beforeAscii + "]->[" + afterAscii + "] Sz[" + beforeSize + "]->[" + afterSize2 + "]");
+                    }
+                }
             }
             return changed;
         }
@@ -172,6 +189,22 @@ namespace TypeRight.Signature
         private static float SafeSize(float size)
         {
             return size >= WordFormatUtils.UndefinedFloat ? -1f : size;
+        }
+
+
+        /// <summary>区间是否含可见文本（纯段落/单元格标记的区间不参与字体写入——纯公式段的标记保持数学字体邻接态，避免幂等抖动）。</summary>
+        private static bool HasVisibleText(Range r)
+        {
+            try
+            {
+                string t = r.Text ?? "";
+                foreach (char ch in t)
+                {
+                    if (ch != (char)13 && ch != (char)7 && ch != (char)11 && ch != ' ' && ch != (char)0x3000) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>段落内数学区之外的文本子区间（含段落标记）。无公式时返回整个段落。</summary>
@@ -207,7 +240,7 @@ namespace TypeRight.Signature
                     Range gap = whole.Duplicate;
                     gap.Start = start;
                     gap.End = b.Key;
-                    result.Add(gap);
+                    if (HasVisibleText(gap)) result.Add(gap);
                 }
                 if (b.Value > start) start = b.Value;
             }
@@ -216,7 +249,7 @@ namespace TypeRight.Signature
                 Range tail = whole.Duplicate;
                 tail.Start = start;
                 tail.End = whole.End;
-                result.Add(tail);
+                if (HasVisibleText(tail)) result.Add(tail);
             }
             return result;
         }

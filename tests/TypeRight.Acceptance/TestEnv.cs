@@ -71,9 +71,12 @@ namespace TypeRight.Acceptance
             return App.Documents.Open(target);
         }
 
+        /// <summary>本轮运行的时间戳（输出文件名隔离，避免残留 Word 进程锁旧文件）。</summary>
+        public readonly string RunStamp = DateTime.Now.ToString("HHmmss");
+
         public string CopyPath(string tag)
         {
-            return Path.Combine(OutputDir, tag + ".docx");
+            return Path.Combine(OutputDir, tag + "-" + RunStamp + ".docx");
         }
 
         /// <summary>回收 Word 进程（重型用例间调用，防止长跑 RPC 崩溃/内存膨胀）。</summary>

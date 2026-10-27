@@ -36,6 +36,19 @@ namespace TypeRight.Profiles
             public int Start;
         }
 
+
+        /// <summary>段落是否已处于规则的 apply 结果状态（字体相等，字号/加粗如指定也相等）。</summary>
+        private static bool IsAlreadyApplied(FormatSignature sig, ApplySpec apply)
+        {
+            if (apply == null) return false;
+            if (apply.EastAsiaFont != null && !string.Equals(sig.EastAsiaFont, apply.EastAsiaFont, StringComparison.OrdinalIgnoreCase)) return false;
+            if (apply.LatinFont != null && !string.Equals(sig.LatinFont, apply.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
+            if (apply.SizePt.HasValue && (double.IsNaN(sig.SizePt) || Math.Abs(sig.SizePt - apply.SizePt.Value) >= 0.01)) return false;
+            if (apply.Bold.HasValue && sig.Bold != apply.Bold.Value) return false;
+            if (apply.EastAsiaFont == null && apply.LatinFont == null && !apply.SizePt.HasValue && !apply.Bold.HasValue) return false;
+            return true;
+        }
+
         private static List<ParaEntry> CollectParas(Document doc, HashSet<int> consumed)
         {
             var list = new List<ParaEntry>();
@@ -80,8 +93,10 @@ namespace TypeRight.Profiles
                         try
                         {
                             if (consumed.Contains(entry.Start)) continue;
-                            if (rule.Match.InTable.HasValue && rule.Match.InTable.Value != entry.InTable) continue;
-                            if (rule.Match.MatchesPara(entry.Sig)) hit.Add(entry.Paragraph);
+                            if (rule.Match.CatchAll != true && rule.Match.InTable.HasValue && rule.Match.InTable.Value != entry.InTable) continue;
+                            // 已应用态识别（幂等关键）：段落当前字体已等于本规则 apply 目标 → 视为本规则属地，
+                            // 防止后续 catchAll 把规则已格式化的段落（楷体/黑体）误刷为兜底字体
+                            if (rule.Match.MatchesPara(entry.Sig) || IsAlreadyApplied(entry.Sig, rule.Apply)) hit.Add(entry.Paragraph);
                         }
                         catch { }
                     }

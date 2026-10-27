@@ -121,7 +121,10 @@ namespace TypeRight.Acceptance
                 var journey = Journey.Run(env.App, doc, env, withFormulas: true);
                 var profile = Journey.ToProfile(journey);
 
+                TypeRight.Signature.BatchFormatter.DiagCount = true;
                 var report2 = ProfileApplier.Apply(env.App, doc, profile);
+                TypeRight.Signature.BatchFormatter.DiagCount = false;
+                Console.WriteLine("  二次应用报告: " + string.Join(" / ", report2.Lines));
                 env.Check(report2.TotalChanged == 0, "二次应用改动数 = 0", "0", report2.TotalChanged.ToString(), string.Join(" / ", report2.Lines));
                 env.Check(report2.FormulaConverted == 0, "二次公式转换 = 0", "0", report2.FormulaConverted.ToString(), null);
             }
