@@ -29,7 +29,9 @@ namespace TypeRight.Tests
             Assert.False(Sig().Equals(Sig(bold: true)));
             Assert.False(Sig().Equals(Sig(color: 0xFF0000)));
             Assert.False(Sig().Equals(Sig(east: "黑体")));
-            Assert.False(Sig().Equals(Sig(align: "c")));
+            // 对齐/斜体不再参与比较（黄金取证）——记录但不比对
+            Assert.True(Sig().Equals(Sig(align: "c")));
+            Assert.True(Sig().Equals(Sig(italic: -1)));
             // 字体名大小写不敏感
             Assert.True(Sig(east: "simsun").Equals(Sig(east: "SimSun")));
         }

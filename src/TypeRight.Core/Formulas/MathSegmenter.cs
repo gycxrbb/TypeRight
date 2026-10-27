@@ -22,8 +22,13 @@ namespace TypeRight.Formulas
             public override string ToString() { return Start + ":" + Text; }
         }
 
-        /// <summary>数学专用符号：几乎只出现在公式里的字符（无需字母即可判定为数学）。</summary>
-        internal const string MathSpecialChars = "√Δπ±·×÷≠≈≤≥⟹⟺↔∵∴△∑∏∫°′″→←∂∞∝∈∉⊂⊃∪∩∀∃";
+        /// <summary>数学专用符号：几乎只出现在公式里的字符（无需字母即可判定为数学）。
+        /// 含希腊字母（数学讲义大量出现 α β γ δ θ λ μ σ φ ω …）与 U+2212 真减号。</summary>
+        internal const string MathSpecialChars =
+            "√Δπ±·×÷≠≈≤≥⟹⇒⟺⇔↔∵∴△△∠⊥∥∑∏∫°′″→←↦∂∇∞∝∈∉∋⊂⊃⊆⊇∪∩∀∃∅⊕⊗⊙∙∘" +
+            "αβγδεζηθικλμνξοπρστυφχψω" +
+            "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ" +
+            "−";
 
         /// <summary>ASCII 运算符（片段里必须至少出现一次才能判定为公式，用于排除普通英文/编号）。</summary>
         internal const string AsciiOperators = "=+-*/<>^_|";
@@ -85,9 +90,9 @@ namespace TypeRight.Formulas
             int i = 0, n = text.Length;
             while (i < n)
             {
-                if (!IsMathChar(text[i])) { i++; continue; }
+                if (!IsMathUnit(text, i)) { i++; continue; }
                 int start = i;
-                while (i < n && IsMathChar(text[i])) i++;
+                while (i < n && IsMathUnit(text, i)) i += UnitLength(text, i);
                 string raw = text.Substring(start, i - start);
                 string trimmed = raw.Trim(' ');
                 if (trimmed.Length == 0) continue;
@@ -100,6 +105,24 @@ namespace TypeRight.Formulas
             return result;
         }
 
+        /// <summary>位置 i 是否数学单元（BMP 数学字符，或 U+1D400-1D7FF 数学字母数字的代理对）。</summary>
+        private static bool IsMathUnit(string text, int i)
+        {
+            char c = text[i];
+            if (!char.IsHighSurrogate(c)) return IsMathChar(c);
+            if (i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                int cp = char.ConvertToUtf32(c, text[i + 1]);
+                return cp >= 0x1D400 && cp <= 0x1D7FF;
+            }
+            return false;
+        }
+
+        private static int UnitLength(string text, int i)
+        {
+            return char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]) ? 2 : 1;
+        }
+
         /// <summary>片段是否达到公式判定门槛。</summary>
         public static bool IsFormulaCandidate(string s)
         {
@@ -108,16 +131,24 @@ namespace TypeRight.Formulas
             if (ModelNumberPattern.IsMatch(s)) return false;
 
             bool hasLetterOrSpecial = false;
-            bool hasOperatorOrSubSup = false;
-            foreach (char c in s)
+            int k = 0;
+            while (k < s.Length)
             {
+                char c = s[k];
                 if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') hasLetterOrSpecial = true;
-                else if (MathSpecial.Contains(c) || SupChars.Contains(c) || SubChars.Contains(c)) { hasLetterOrSpecial = true; hasOperatorOrSubSup = true; }
-                else if (AsciiOp.Contains(c)) hasOperatorOrSubSup = true;
+                else if (MathSpecial.Contains(c) || SupChars.Contains(c) || SubChars.Contains(c)) hasLetterOrSpecial = true;
+                else if (char.IsHighSurrogate(c) && k + 1 < s.Length && char.IsLowSurrogate(s[k + 1]))
+                {
+                    int cp = char.ConvertToUtf32(c, s[k + 1]);
+                    if (cp >= 0x1D400 && cp <= 0x1D7FF) hasLetterOrSpecial = true;   // 数学字母数字区
+                    k++;
+                }
+                k++;
             }
-            // 必须含字母或数学专用符号，且含运算符/上下标，排除纯英文词与"Office 2016"类
-            if (!hasLetterOrSpecial || !hasOperatorOrSubSup) return false;
-            // 纯点号/逗号结尾的编号如 "6.1."（无字母）已被上面拦截；补一道：全数字带 % 也不转
+            // PRD §6.3：片段限定 = 含至少一个字母或数学专用符号；纯数字/百分比/小节号不转。
+            // 运算符不作为门槛（黄金取证：裸变量 a、x、2a、k 各自成区，共 255 区）；
+            // 白名单与型号模式继续排除 vs / COVID-19 类。
+            if (!hasLetterOrSpecial) return false;
             return true;
         }
 

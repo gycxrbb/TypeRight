@@ -68,12 +68,14 @@ namespace TypeRight.Formatting
         {
             var stats = new FormulaStats();
             Paragraphs paragraphs = _doc.Paragraphs;
-            int count = paragraphs.Count;
-            for (int i = 1; i <= count; i++)
+            // 先整表收集再处理：遍历中修改文档会使枚举器失效；Paragraph 代理是活动区间，
+            // 后续插入会自动跟随。注意禁用 Paragraphs[i] 索引器（O(n) 重扫）。
+            var all = new List<Paragraph>();
+            foreach (Paragraph p in paragraphs) all.Add(p);
+
+            for (int i = all.Count - 1; i >= 0; i--)
             {
-                Paragraph p = null;
-                try { p = paragraphs[i]; }
-                catch { continue; }
+                Paragraph p = all[i];
                 if (p == null) continue;
                 ConvertParagraph(p, stats);
             }
@@ -151,36 +153,142 @@ namespace TypeRight.Formatting
         /// <summary>单个片段的转换。失败时尽力还原原文并返回 false。</summary>
         private bool TryConvertRange(Range rng, string originalText)
         {
-            string mapped = UnicodeMathMapper.Map(originalText);
+            // 边缘悬挂括号剥离：尾部悬 ( [（后随中文说明被切开的场景）与头部悬 ) 剥掉再判平衡；
+            // 剥离后仍不平衡（如 y = a(x - h）才判失败保留原文（TC-11）
+            string trimmed = TrimDanglingDelimiters(originalText);
+            if (trimmed.Length == 0) return false;
+            if (HasUnbalancedDelimiters(trimmed)) return false;
+            originalText = trimmed;
+
+            string mapped = UnicodeMathMapper.NormalizeMathAlphanumerics(UnicodeMathMapper.Map(originalText));
             int mathCountBefore = 0;
             try { mathCountBefore = rng.OMaths.Count; } catch { }
 
             try
             {
-                if (!string.Equals(mapped, originalText, StringComparison.Ordinal))
-                    rng.Text = mapped;
-
-                Range mathRange = _doc.OMaths.Add(rng);
-                if (mathRange == null) throw new InvalidOperationException("OMaths.Add 返回空。");
-                OMath om = mathRange.OMaths[1];
-                if (om == null) throw new InvalidOperationException("未取到公式对象。");
-                om.BuildUp();
-
-                int mathCountAfter;
-                try { mathCountAfter = rng.OMaths.Count; } catch { mathCountAfter = 1; }
-                if (mathCountAfter <= mathCountBefore) throw new InvalidOperationException("公式对象未建立。");
-
-                if (_mathSizePt.HasValue)
-                {
-                    try { om.Range.Font.Size = (float)_mathSizePt.Value; } catch { }
-                }
-                return true;
+                if (StructuredMath.NeedsStructure(mapped))
+                    return ConvertStructured(rng, mapped, mathCountBefore);
+                return ConvertPlain(rng, mapped, mathCountBefore);
             }
             catch
             {
                 Restore(rng, originalText, mathCountBefore);
                 return false;
             }
+        }
+
+        /// <summary>无结构片段：线性文本 → OMaths.Add → BuildUp（构建上下标）。</summary>
+        private bool ConvertPlain(Range rng, string mapped, int mathCountBefore)
+        {
+            if (!string.IsNullOrEmpty(mapped)) rng.Text = mapped;
+
+            Range mathRange = _doc.OMaths.Add(rng);
+            OMath om = ZoneMath(mathRange);
+            if (om == null) throw new InvalidOperationException("未取到公式对象。");
+            om.BuildUp();
+
+            int after = SafeMathCount(rng);
+            if (after <= mathCountBefore) throw new InvalidOperationException("公式对象未建立。");
+            ApplyMathSize(om);
+            return true;
+        }
+
+        /// <summary>
+        /// 结构化片段（顶层分式 / 根式）：BuildUp 只构建上下标、不建 m:f/m:rad（探针实证），
+        /// 走 OMathFunctions.Add(Frac/Rad)：规范化分式括号 → 建区 → 根式 span 从右到左
+        /// 逐个 Rad → 顶层 Frac → BuildUp 收尾剩余脚本。
+        /// </summary>
+        private bool ConvertStructured(Range rng, string mapped, int mathCountBefore)
+        {
+            string work = StructuredMath.NormalizeFractionParens(mapped);
+            if (!string.IsNullOrEmpty(work)) rng.Text = work;
+
+            int zoneStart = rng.Start;
+            Range mathRange = _doc.OMaths.Add(rng);
+            OMath om = ZoneMath(mathRange);
+            if (om == null) throw new InvalidOperationException("未取到公式对象。");
+
+            // 根式：从右到左（区间随内容变化自动跟随，先处理右侧不影响左侧偏移）
+            foreach (var span in StructuredMath.RadicalSpans(work))
+            {
+                try
+                {
+                    Range sub = _doc.Range(zoneStart + span.Key, zoneStart + span.Value);
+                    om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionRad);
+                }
+                catch { /* 单个根式失败降级为线性文本 */ }
+            }
+
+            // 顶层分式：整个公式区作为 "num/den" 交给 Frac 函数切分
+            int slash = StructuredMath.TopLevelSlashIndex(work);
+            if (slash >= 0)
+            {
+                try { om.Functions.Add(om.Range, WdOMathFunctionType.wdOMathFunctionFrac); }
+                catch { /* 降级 */ }
+            }
+
+            om.BuildUp();
+
+            int after = SafeMathCount(rng);
+            if (after <= mathCountBefore) throw new InvalidOperationException("公式对象未建立。");
+            ApplyMathSize(om);
+            return true;
+        }
+
+        private static OMath ZoneMath(Range mathRange)
+        {
+            try { return mathRange.OMaths[1]; }
+            catch { return null; }
+        }
+
+        private static int SafeMathCount(Range rng)
+        {
+            try { return rng.OMaths.Count; }
+            catch { return 1; }
+        }
+
+        private void ApplyMathSize(OMath om)
+        {
+            if (_mathSizePt.HasValue)
+            {
+                try { om.Range.Font.Size = (float)_mathSizePt.Value; } catch { }
+            }
+        }
+
+
+        /// <summary>剥离片段边缘悬挂的开/闭括号（尾部未配对 ( [ { 与头部未配对 ) ] }）。</summary>
+        private static string TrimDanglingDelimiters(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            string t = s.TrimEnd();
+            while (t.Length > 0 && (t[t.Length - 1] == '(' || t[t.Length - 1] == '[' || t[t.Length - 1] == '{'))
+                t = t.Substring(0, t.Length - 1).TrimEnd();
+            t = t.TrimStart();
+            while (t.Length > 0 && (t[0] == ')' || t[0] == ']' || t[0] == '}'))
+                t = t.Substring(1).TrimStart();
+            return t;
+        }
+
+        /// <summary>圆括号/方括号/花括号是否不闭合（不成对即视为不闭合）。</summary>
+        private static bool HasUnbalancedDelimiters(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            int paren = 0, bracket = 0, brace = 0;
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '(': paren++; break;
+                    case ')': paren--; break;
+                    case '[': bracket++; break;
+                    case ']': bracket--; break;
+                    case '{': brace++; break;
+                    case '}': brace--; break;
+                }
+            }
+            // 仅未闭合的开括号判失败（TC-11 的 y = a(x - h）；
+            // 游离闭括号（如 m) ×）由 Word 字面渲染，放行（黄金取证）
+            return paren > 0 || bracket > 0 || brace > 0;
         }
 
         /// <summary>失败恢复：移除可能残留的公式对象并还原纯文本。</summary>

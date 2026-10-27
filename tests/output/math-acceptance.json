@@ -1,0 +1,92 @@
+{
+  "schema_version": 2,
+  "id": "math-acceptance",
+  "name": "数学讲义",
+  "created": "2026-10-27",
+  "rules": [
+    {
+      "order": 1,
+      "match": {
+        "eastAsiaFont": "+中文正文",
+        "latinFont": "微软雅黑",
+        "sizePt": 15.0,
+        "bold": true,
+        "color": "#1A365D",
+        "ignore": [
+          "sizePt"
+        ],
+        "IgnoreValue": 1
+      },
+      "apply": {
+        "eastAsiaFont": "楷体",
+        "latinFont": "Times New Roman",
+        "sizePt": null,
+        "bold": null,
+        "color": null
+      }
+    },
+    {
+      "order": 2,
+      "match": {
+        "eastAsiaFont": "+中文正文",
+        "latinFont": "微软雅黑",
+        "sizePt": 12.5,
+        "bold": true,
+        "color": "#2B6CB0",
+        "IgnoreValue": 0
+      },
+      "apply": {
+        "eastAsiaFont": "黑体",
+        "latinFont": "Times New Roman",
+        "sizePt": null,
+        "bold": null,
+        "color": null
+      }
+    },
+    {
+      "order": 3,
+      "match": {
+        "eastAsiaFont": "+中文正文",
+        "latinFont": "宋体",
+        "sizePt": 10.5,
+        "bold": false,
+        "color": "#282828",
+        "ignore": [
+          "color",
+          "bold"
+        ],
+        "IgnoreValue": 6
+      },
+      "apply": {
+        "eastAsiaFont": "宋体",
+        "latinFont": "Times New Roman",
+        "sizePt": null,
+        "bold": null,
+        "color": null
+      }
+    },
+    {
+      "order": 4,
+      "match": {
+        "eastAsiaFont": "+中文正文",
+        "latinFont": "微软雅黑",
+        "sizePt": 9.0,
+        "bold": false,
+        "color": "#718096",
+        "ignore": [
+          "sizePt",
+          "color"
+        ],
+        "IgnoreValue": 3
+      },
+      "apply": {
+        "eastAsiaFont": "宋体",
+        "latinFont": "Times New Roman",
+        "sizePt": null,
+        "bold": null,
+        "color": null
+      }
+    }
+  ],
+  "convertFormulas": true
+}

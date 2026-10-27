@@ -69,6 +69,10 @@ namespace TypeRight.Profiles
         [JsonProperty("catchAll", NullValueHandling = NullValueHandling.Ignore)]
         public bool? CatchAll { get; set; }
 
+        /// <summary>样本所在文本域：true=表格内，false=正文，null=不限（同类选择的正文/表格分区随样本记录）。</summary>
+        [JsonProperty("inTable", NullValueHandling = NullValueHandling.Ignore)]
+        public bool? InTable { get; set; }
+
         public Signature.FormatSignature.IgnoreDims IgnoreValue
         {
             get

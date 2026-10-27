@@ -21,12 +21,27 @@ namespace TypeRight.Signature
 
     /// <summary>
     /// 同类段落匹配（PRD v2 P0-1）：全文段落 + 表格单元格内段落，按签名比对。
+    /// 分区规则（黄金文件取证）：正文样本只匹配正文段落，表格样本只匹配表格内段落——
+    /// 避免正文样本把表格里的同格式装饰段（如 ★ 导读）一并卷入。
     /// 性能目标：1000 段 &lt; 1s。
     /// </summary>
     public static class SimilarSelector
     {
-        /// <summary>样本签名 → 全文匹配。</summary>
-        public static SimilarMatchResult Match(Document doc, FormatSignature sample, FormatSignature.IgnoreDims ignore)
+        /// <summary>样本段落驱动：提取签名 + 判定表格分区后匹配。</summary>
+        public static SimilarMatchResult Match(Document doc, Paragraph sampleParagraph, FormatSignature.IgnoreDims ignore)
+        {
+            bool sampleInTable = false;
+            try
+            {
+                sampleInTable = Convert.ToBoolean(sampleParagraph.Range.get_Information(
+                    NetOffice.WordApi.Enums.WdInformation.wdWithInTable));
+            }
+            catch { }
+            return Match(doc, FormatSignatureReader.Read(sampleParagraph), ignore, sampleInTable);
+        }
+
+        /// <summary>样本签名 → 全文匹配（分区：sampleInTable 决定命中文本域）。</summary>
+        public static SimilarMatchResult Match(Document doc, FormatSignature sample, FormatSignature.IgnoreDims ignore, bool sampleInTable = false)
         {
             var watch = Stopwatch.StartNew();
             var result = new SimilarMatchResult { SampleSignature = sample, Ignore = ignore };
@@ -42,6 +57,10 @@ namespace TypeRight.Signature
             foreach (Paragraph p in paragraphs)
             {
                 index++;
+                bool inTable = false;
+                try { inTable = Convert.ToBoolean(p.Range.get_Information(NetOffice.WordApi.Enums.WdInformation.wdWithInTable)); }
+                catch { }
+                if (inTable != sampleInTable) continue;   // 正文/表格分区
                 FormatSignature s = FormatSignatureReader.Read(p);
                 if (s.IsEmpty) continue;          // 空段/无可见文本不参与
                 if (s.Matches(sample, ignore)) result.Paragraphs.Add(p);

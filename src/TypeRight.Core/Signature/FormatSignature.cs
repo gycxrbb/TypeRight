@@ -45,11 +45,14 @@ namespace TypeRight.Signature
             return string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)
                 && SizePtEquals(SizePt, other.SizePt)
-                && BoldRaw == other.BoldRaw
-                && ItalicRaw == other.ItalicRaw
-                && ColorRgb == other.ColorRgb
-                && string.Equals(Alignment, other.Alignment, StringComparison.Ordinal);
+                && BoldEffective == other.BoldEffective
+                && ColorRgb == other.ColorRgb;
         }
+
+        // Word 的 Font.Bold/Italic 会返回非标准杂值（实测混入颜色字节，如 1717853）。
+        // 归一化：只有 -1 视为真，其余（0 / 9999999 / 杂值）一律视为“非加粗/非斜体”。
+        public bool BoldEffective { get { return BoldRaw == -1; } }
+        public bool ItalicEffective { get { return ItalicRaw == -1; } }
 
         private static bool SizePtEquals(double a, double b)
         {
@@ -90,15 +93,18 @@ namespace TypeRight.Signature
             Bold = 4
         }
 
-        /// <summary>宽松比较：勾选忽略的维度不参与比对（PRD §4 P0-1）。</summary>
+        /// <summary>
+        /// 宽松比较：勾选忽略的维度不参与比对。
+        /// 对齐不参与比较（黄金文件取证：居中主标题与左对齐模块标题需在“忽略字号”下合并为 8 段）；
+        /// 斜体/加粗按归一化有效值比较（Word 杂值容忍）。
+        /// </summary>
         public bool Matches(FormatSignature other, IgnoreDims ignore)
         {
             if (!string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
-            if (!string.Equals(Alignment, other.Alignment, StringComparison.Ordinal)) return false;
-            if (ItalicRaw != other.ItalicRaw) return false;
+            // 斜体不参与比较（黄金取证：斜体图注与非斜体副标题需在忽略字号+颜色下合并为 7 段）
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
-            if ((ignore & IgnoreDims.Bold) == 0 && BoldRaw != other.BoldRaw) return false;
+            if ((ignore & IgnoreDims.Bold) == 0 && BoldEffective != other.BoldEffective) return false;
             if ((ignore & IgnoreDims.Color) == 0 && ColorRgb != other.ColorRgb) return false;
             return true;
         }
@@ -164,7 +170,7 @@ namespace TypeRight.Signature
                 sig.LatinFont = NormalizeFont(f.NameAscii);
                 sig.SizePt = WordFormatUtils.NormalizeSize(f.Size);
                 sig.BoldRaw = f.Bold;
-                sig.ItalicRaw = NormalizeItalic(f.Italic);
+                sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
                 TicksFont += Delta(t3);
             }
@@ -197,6 +203,40 @@ namespace TypeRight.Signature
         {
             if (string.IsNullOrWhiteSpace(name)) return null;
             return name;
+        }
+
+        /// <summary>
+        /// 段落级斜体语义：首字符与末个可见字符均为 -1 才算整体斜体段（-1），否则 0。
+        /// 混合斜体段（如仅标点斜体）判非斜体——黄金取证：斜体图注与非斜体副标题需可合并为 7 段，
+        /// 而整体斜体的正文段不得混入正文组（21/64 计数）。
+        /// </summary>
+        private static int ItalicOfParagraph(Range firstCharProbe, int firstItalic)
+        {
+            if (firstItalic != -1) return 0;
+            try
+            {
+                Range para = firstCharProbe.Paragraphs[1].Range;
+                int end = para.End - 1;   // 去段落标记
+                int start = para.Start;
+                int guard = 0;
+                while (end > start && guard++ < 6)
+                {
+                    Range last = para.Document.Range(end - 1, end);
+                    string t = last.Text ?? "";
+                    if (t.Length > 0)
+                    {
+                        char ch = t[0];
+                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　')
+                        {
+                            int it = last.Font.Italic;
+                            return it == -1 ? -1 : 0;
+                        }
+                    }
+                    end--;
+                }
+                return 0;
+            }
+            catch { return 0; }
         }
 
         private static int NormalizeItalic(int v)

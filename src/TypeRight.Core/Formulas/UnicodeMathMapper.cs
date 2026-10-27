@@ -27,6 +27,60 @@ namespace TypeRight.Formulas
             {'ₐ','a'},{'ₑ','e'},{'ₒ','o'},{'ₓ','x'},{'ₕ','h'},{'ₖ','k'},{'ₗ','l'},{'ₘ','m'},{'ₙ','n'},{'ₚ','p'},{'ₛ','s'},{'ₜ','t'}
         };
 
+
+        /// <summary>数学字母数字区（U+1D400-1D7FF）转 ASCII 等价（常见块基址映射）。</summary>
+        public static string NormalizeMathAlphanumerics(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            var sb = new System.Text.StringBuilder(text.Length);
+            int i = 0;
+            while (i < text.Length)
+            {
+                char c = text[i];
+                if (char.IsHighSurrogate(c) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    sb.Append(NormalizeMathCodePoint(char.ConvertToUtf32(c, text[i + 1])));
+                    i += 2;
+                }
+                else
+                {
+                    sb.Append(c);
+                    i++;
+                }
+            }
+            return sb.ToString();
+        }
+
+        private static string NormalizeMathCodePoint(int code)
+        {
+            if (code < 0x1D400 || code > 0x1D7FF) return char.ConvertFromUtf32(code);
+            int[][] blocks =
+            {
+                new[] { 0x1D400, 65 },   // 粗体 A-Z
+                new[] { 0x1D41A, 97 },   // 粗体 a-z
+                new[] { 0x1D434, 65 },   // 斜体 A-Z
+                new[] { 0x1D44E, 97 },   // 斜体 a-z
+                new[] { 0x1D468, 65 },   // 粗斜体 A-Z
+                new[] { 0x1D482, 97 },   // 粗斜体 a-z
+                new[] { 0x1D4D0, 65 },   // 粗花体 A-Z
+                new[] { 0x1D4EA, 97 },   // 粗花体 a-z
+                new[] { 0x1D5D4, 65 },   // 无衬线粗 A-Z
+                new[] { 0x1D5EE, 97 },   // 无衬线粗 a-z
+            };
+            foreach (var b in blocks)
+            {
+                int offset = code - b[0];
+                if (offset >= 0 && offset < 26)
+                {
+                    char mapped = (char)(b[1] + offset);
+                    if (b[1] == 65 && mapped >= 'A' && mapped <= 'Z') return mapped.ToString();
+                    if (b[1] == 97 && mapped >= 'a' && mapped <= 'z') return mapped.ToString();
+                }
+            }
+            if (code >= 0x1D7CE && code <= 0x1D7D7) return ((char)('0' + (code - 0x1D7CE))).ToString();
+            return char.ConvertFromUtf32(code);
+        }
+
         /// <summary>把原始片段文本转成 UnicodeMath 线性串。</summary>
         public static string Map(string text)
         {
