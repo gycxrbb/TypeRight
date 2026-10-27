@@ -107,6 +107,11 @@ namespace TypeRight.Signature
     /// <summary>签名提取与同类匹配（PRD v2 P0-1）。</summary>
     public static class FormatSignatureReader
     {
+        /// <summary>性能剖析累计（控制器单次匹配后读取并清零）。</summary>
+        public static long TicksEnumerator, TicksRange, TicksText, TicksProbe, TicksFont, TicksAlign;
+
+        private static long Now() { return System.Diagnostics.Stopwatch.GetTimestamp(); }
+        private static long Delta(long start) { return Now() - start; }
         /// <summary>
         /// 提取段落签名。快路径：段落区间整体读（均匀段落 = 首个非空 run 的有效值，典型文档占绝大多数）；
         /// 出现混合哨兵（wdUndefined）时降级为“首个非空字符”逐点探测。空段返回 IsEmpty 签名。
@@ -118,9 +123,14 @@ namespace TypeRight.Signature
             Range probe = null;
             try
             {
+                long t0 = Now();
                 Range whole = paragraph.Range;
                 int start = whole.Start;
+                TicksRange += Delta(t0);
+
+                long t1 = Now();
                 string text = whole.Text ?? "";
+                TicksText += Delta(t1);
 
                 int offset = -1;
                 int limit = System.Math.Min(text.Length, 24);
@@ -134,9 +144,11 @@ namespace TypeRight.Signature
 
                 if (offset >= 0)
                 {
+                    long t2 = Now();
                     probe = whole.Duplicate;
                     probe.Start = start + offset;
                     probe.End = start + offset + 1;
+                    TicksProbe += Delta(t2);
                 }
             }
             catch { }
@@ -146,6 +158,7 @@ namespace TypeRight.Signature
             var sig = new FormatSignature { SizePt = double.NaN, ColorRgb = -1, Alignment = "?" };
             try
             {
+                long t3 = Now();
                 Font f = probe.Font;
                 sig.EastAsiaFont = NormalizeFont(f.NameFarEast);
                 sig.LatinFont = NormalizeFont(f.NameAscii);
@@ -153,11 +166,23 @@ namespace TypeRight.Signature
                 sig.BoldRaw = f.Bold;
                 sig.ItalicRaw = NormalizeItalic(f.Italic);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
+                TicksFont += Delta(t3);
             }
             catch { }
 
-            try { sig.Alignment = AlignmentKey(Convert.ToInt32(paragraph.Alignment)); }
-            catch { }
+            try
+            {
+                long t4 = Now();
+                // Paragraph.Alignment 经 Paragraph 代理读取实测 ~1.5ms/次；
+                // 走探针区间的 ParagraphFormat 同样便宜（与 Font 同路径）
+                sig.Alignment = AlignmentKey(Convert.ToInt32(probe.ParagraphFormat.Alignment));
+                TicksAlign += Delta(t4);
+            }
+            catch
+            {
+                try { sig.Alignment = AlignmentKey(Convert.ToInt32(paragraph.Alignment)); }
+                catch { }
+            }
 
             return sig;
         }

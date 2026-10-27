@@ -29,7 +29,9 @@ namespace TypeRight.Addin.UI
 
         public FloatBar(TypeRightController controller)
         {
+            _suppressEvents = true;   // XAML 初始化期间 IsChecked 赋值会触发事件，此时控件尚未全部构建
             InitializeComponent();
+            _suppressEvents = false;
             _controller = controller;
 
             CboSize.Items.Add(new SizeItem(null)); // “—” = 不改

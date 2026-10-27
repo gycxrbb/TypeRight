@@ -34,17 +34,22 @@ namespace TypeRight.Signature
 
             Paragraphs paragraphs = doc.Paragraphs;
             int count = paragraphs.Count;
-            for (int i = 1; i <= count; i++)
+            FormatSignatureReader.TicksRange = FormatSignatureReader.TicksText = FormatSignatureReader.TicksProbe =
+                FormatSignatureReader.TicksFont = FormatSignatureReader.TicksAlign = 0;
+            long enumStart = Stopwatch.GetTimestamp();
+            // 注意：Paragraphs[i] 索引器是 O(n) 重扫（千段文档实测 O(n²)≈8.9s），必须用枚举器顺序遍历
+            int index = 0;
+            foreach (Paragraph p in paragraphs)
             {
-                Paragraph p = null;
-                try { p = paragraphs[i]; }
-                catch { continue; }
-                if (p == null) continue;
-
+                index++;
                 FormatSignature s = FormatSignatureReader.Read(p);
                 if (s.IsEmpty) continue;          // 空段/无可见文本不参与
                 if (s.Matches(sample, ignore)) result.Paragraphs.Add(p);
             }
+            count = index;
+            FormatSignatureReader.TicksEnumerator = Stopwatch.GetTimestamp() - enumStart
+                - FormatSignatureReader.TicksRange - FormatSignatureReader.TicksText
+                - FormatSignatureReader.TicksProbe - FormatSignatureReader.TicksFont - FormatSignatureReader.TicksAlign;
 
             watch.Stop();
             result.Duration = watch.Elapsed;

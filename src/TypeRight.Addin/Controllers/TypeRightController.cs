@@ -65,18 +65,20 @@ namespace TypeRight.Addin.Controllers
         /// <summary>入口：光标段落（或选区首段）为样本，匹配全文同类。</summary>
         public void SimilarSelect()
         {
+            TypeRightAddin.Log("SimilarSelect: enter");
             try
             {
                 Document doc = ActiveDocument();
                 if (doc == null)
                 {
+                    TypeRightAddin.Log("SimilarSelect: no active document");
                     ShowToast("请先打开一个文档");
                     return;
                 }
 
                 Paragraph sample = null;
                 try { sample = App.Selection.Range.Paragraphs[1]; }
-                catch { }
+                catch (Exception ex) { TypeRightAddin.Log("SimilarSelect: sample read failed: " + ex.Message); }
                 if (sample == null)
                 {
                     ShowToast("光标不在正文段落中");
@@ -84,6 +86,7 @@ namespace TypeRight.Addin.Controllers
                 }
 
                 var sig = FormatSignatureReader.Read(sample);
+                TypeRightAddin.Log("SimilarSelect: sample sig = " + sig);
                 if (sig.IsEmpty)
                 {
                     ShowToast("当前段落没有可见文本，换一个段落试试");
@@ -125,7 +128,13 @@ namespace TypeRight.Addin.Controllers
             if (_session == null) return;
             var result = SimilarSelector.Match(_session.Doc, _session.SampleSignature, _session.Ignore);
             _session.Matched = result.Paragraphs;
-            TypeRightAddin.Log("同类匹配: " + result.Count + " 段 / " + result.Duration.TotalMilliseconds.ToString("0") + "ms（进程内） ignore=" + _session.Ignore);
+            long ticksPerMs = System.Diagnostics.Stopwatch.Frequency / 1000;
+            TypeRightAddin.Log(string.Format(
+                "同类匹配: {0} 段 / {1}ms（进程内） ignore={2} | 分解: 枚举{3}ms 区间{4}ms 文本{5}ms 探针{6}ms 字体{7}ms 对齐{8}ms",
+                result.Count, result.Duration.TotalMilliseconds.ToString("0"), _session.Ignore,
+                FormatSignatureReader.TicksEnumerator / ticksPerMs, FormatSignatureReader.TicksRange / ticksPerMs,
+                FormatSignatureReader.TicksText / ticksPerMs, FormatSignatureReader.TicksProbe / ticksPerMs,
+                FormatSignatureReader.TicksFont / ticksPerMs, FormatSignatureReader.TicksAlign / ticksPerMs));
 
             // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈
             try
