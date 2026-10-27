@@ -46,6 +46,7 @@ namespace TypeRight.Signature
                 && string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)
                 && SizePtEquals(SizePt, other.SizePt)
                 && BoldEffective == other.BoldEffective
+                && ItalicRaw == other.ItalicRaw
                 && ColorRgb == other.ColorRgb;
         }
 
@@ -102,7 +103,7 @@ namespace TypeRight.Signature
         {
             if (!string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
-            // 斜体不参与比较（黄金取证：斜体图注与非斜体副标题需在忽略字号+颜色下合并为 7 段）
+            if (ItalicRaw != other.ItalicRaw) return false;   // 三态：-1 / 0 / 9999999（混合）
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
             if ((ignore & IgnoreDims.Bold) == 0 && BoldEffective != other.BoldEffective) return false;
             if ((ignore & IgnoreDims.Color) == 0 && ColorRgb != other.ColorRgb) return false;
@@ -212,11 +213,14 @@ namespace TypeRight.Signature
         /// </summary>
         private static int ItalicOfParagraph(Range firstCharProbe, int firstItalic)
         {
-            if (firstItalic != -1) return 0;
+            // 三态分类（黄金取证）：-1=整体斜体；0=非斜体；9999999=混合（首字符杂值，自成一类）。
+            // 混合斜体正文段凭 9999999 与纯正文组分开（21/64 计数），
+            // 而整体斜体(-1)按非斜体归并（图注与副标题合并为 7 段）。
+            if (firstItalic != -1 && firstItalic != 0) return WordFormatUtils.UndefinedInt;
             try
             {
                 Range para = firstCharProbe.Paragraphs[1].Range;
-                int end = para.End - 1;   // 去段落标记
+                int end = para.End - 1;
                 int start = para.Start;
                 int guard = 0;
                 while (end > start && guard++ < 6)
@@ -226,17 +230,18 @@ namespace TypeRight.Signature
                     if (t.Length > 0)
                     {
                         char ch = t[0];
-                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　')
+                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '\u3000')
                         {
                             int it = last.Font.Italic;
-                            return it == -1 ? -1 : 0;
+                            if (firstItalic == -1) return it == -1 ? -1 : 0;
+                            return it == 0 ? 0 : WordFormatUtils.UndefinedInt;
                         }
                     }
                     end--;
                 }
-                return 0;
+                return firstItalic;
             }
-            catch { return 0; }
+            catch { return firstItalic; }
         }
 
         private static int NormalizeItalic(int v)

@@ -80,6 +80,14 @@ namespace TypeRight.Formulas
             return spans;
         }
 
+        /// <summary>顶层 “num/den” 操作数 span（含斜杠）；无顶层斜杠返回 null。</summary>
+        public static KeyValuePair<int, int>? FractionSpan(string linear)
+        {
+            int slash = TopLevelSlashIndex(linear);
+            if (slash < 0) return null;
+            return new KeyValuePair<int, int>(OperandStart(linear, slash), OperandEnd(linear, slash));
+        }
+
         /// <summary>分式左操作数起点：向前扫到最近的顶层运算符或串首。</summary>
         private static int OperandStart(string s, int slash)
         {

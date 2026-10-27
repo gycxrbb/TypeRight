@@ -208,7 +208,10 @@ namespace TypeRight.Formatting
             OMath om = ZoneMath(mathRange);
             if (om == null) throw new InvalidOperationException("未取到公式对象。");
 
-            // 根式：从右到左（区间随内容变化自动跟随，先处理右侧不影响左侧偏移）
+            // 先 BuildUp：构建上下标（结构体创建后 BuildUp 不再作用于其内部，探针实证）
+            om.BuildUp();
+
+            // 根式：基于插入文本的 span（区间随内容变化自动跟随），从右到左
             foreach (var span in StructuredMath.RadicalSpans(work))
             {
                 try
@@ -216,18 +219,20 @@ namespace TypeRight.Formatting
                     Range sub = _doc.Range(zoneStart + span.Key, zoneStart + span.Value);
                     om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionRad);
                 }
-                catch { /* 单个根式失败降级为线性文本 */ }
+                catch { }
             }
 
-            // 顶层分式：整个公式区作为 "num/den" 交给 Frac 函数切分
-            int slash = StructuredMath.TopLevelSlashIndex(work);
-            if (slash >= 0)
+            // 顶层分式：只圈 “num/den” 操作数 span（避免把 x = 之类前缀卷进分子）
+            var fracSpan = StructuredMath.FractionSpan(work);
+            if (fracSpan.HasValue)
             {
-                try { om.Functions.Add(om.Range, WdOMathFunctionType.wdOMathFunctionFrac); }
-                catch { /* 降级 */ }
+                try
+                {
+                    Range sub = _doc.Range(zoneStart + fracSpan.Value.Key, zoneStart + fracSpan.Value.Value);
+                    om.Functions.Add(sub, WdOMathFunctionType.wdOMathFunctionFrac);
+                }
+                catch { }
             }
-
-            om.BuildUp();
 
             int after = SafeMathCount(rng);
             if (after <= mathCountBefore) throw new InvalidOperationException("公式对象未建立。");

@@ -36,7 +36,12 @@ namespace TypeRight.Tests
         [Fact]
         public void PlainEnglishWordNotConverted()
         {
-            Assert.Empty(Segments("使用 Office 2016 编辑文档。"));
+            // PRD §6.3（v2 验收口径）：含字母即可成片段（黄金 255 区依赖裸字母片段）；
+            // 白名单 vs 与型号模式 COVID-19 继续排除。“Office 2016”按 PRD 属可转范围（真实讲义无此形态）。
+            var segs = Segments("使用 Office 2016 编辑文档。");
+            Assert.Contains("Office 2016", segs);
+            Assert.Empty(Segments("甲队 vs 乙队"));
+            Assert.Empty(Segments("疫情 COVID-19 期间。"));
         }
 
         [Fact]

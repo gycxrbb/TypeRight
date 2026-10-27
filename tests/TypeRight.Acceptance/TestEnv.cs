@@ -205,7 +205,7 @@ namespace TypeRight.Acceptance
             string compact = contains.Replace(" ", "");
             foreach (XElement tc in Root.Descendants(W + "tc"))
             {
-                if (PlainText(tc).Replace(" ", "").Contains(compact)) return tc;
+                if ((PlainText(tc) + MathText(tc)).Replace(" ", "").Contains(compact)) return tc;
             }
             return null;
         }

@@ -116,22 +116,60 @@ namespace TypeRight.Signature
                 try { f = r.Font; } catch { }
                 if (f == null) continue;
 
+                // 前置快照（幂等计数与字号护栏用）
+                string beforeFE = SafeFontName(f.NameFarEast);
+                string beforeAscii = SafeFontName(f.NameAscii);
+                float beforeSize = SafeSize(f.Size);
+
+                // 字号护栏：区间级字体族写入会重写 rPr，个别场景剥掉 w:sz（★ 段实测）。
+                // 有效字号先记下，写完字体后缺失则回写。
+                bool guardSize = beforeSize > 0 && beforeSize < WordFormatUtils.UndefinedFloat;
+
                 if (c.EastAsiaFont != null)
-                    changed |= WordFormatUtils.SetIfChanged(() => f.NameFarEast, v => f.NameFarEast = v, c.EastAsiaFont);
+                    WordFormatUtils.SetIfChanged(() => f.NameFarEast, v => f.NameFarEast = v, c.EastAsiaFont);
                 if (c.LatinFont != null)
                 {
-                    changed |= WordFormatUtils.SetIfChanged(() => f.NameAscii, v => f.NameAscii = v, c.LatinFont);
-                    changed |= WordFormatUtils.SetIfChanged(() => f.NameOther, v => f.NameOther = v, c.LatinFont);
+                    WordFormatUtils.SetIfChanged(() => f.NameAscii, v => f.NameAscii = v, c.LatinFont);
+                    WordFormatUtils.SetIfChanged(() => f.NameOther, v => f.NameOther = v, c.LatinFont);
                 }
                 if (c.SizePt.HasValue)
-                    changed |= WordFormatUtils.SetIfChanged(() => f.Size, v => f.Size = v, (float)c.SizePt.Value, WordFormatUtils.FloatEq);
+                    WordFormatUtils.SetIfChanged(() => f.Size, v => f.Size = v, (float)c.SizePt.Value, WordFormatUtils.FloatEq);
                 if (c.Bold.HasValue)
-                    changed |= WordFormatUtils.SetIfChanged(() => f.Bold, v => f.Bold = v, c.Bold.Value ? -1 : 0, WordFormatUtils.IntEq);
+                    WordFormatUtils.SetIfChanged(() => f.Bold, v => f.Bold = v, c.Bold.Value ? -1 : 0, WordFormatUtils.IntEq);
                 if (c.ColorRgb.HasValue)
-                    changed |= WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
+                    WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
                         (WdColor)WordFormatUtils.RgbToWdColor(c.ColorRgb.Value), (a, b) => a == b);
+
+                if (guardSize)
+                {
+                    try
+                    {
+                        float after = f.Size;
+                        if (after >= WordFormatUtils.UndefinedFloat || Math.Abs(after - beforeSize) > 0.05f)
+                            f.Size = beforeSize;
+                    }
+                    catch { }
+                }
+
+                // 幂等计数：前后有效值对比（区间含混合值时读数恒定，不会误报）
+                string afterFE = SafeFontName(f.NameFarEast);
+                string afterAscii = SafeFontName(f.NameAscii);
+                float afterSize2 = SafeSize(f.Size);
+                if (!string.Equals(beforeFE, afterFE, StringComparison.OrdinalIgnoreCase)) changed = true;
+                else if (!string.Equals(beforeAscii, afterAscii, StringComparison.OrdinalIgnoreCase)) changed = true;
+                else if (Math.Abs(beforeSize - afterSize2) > 0.05f) changed = true;
             }
             return changed;
+        }
+
+        private static string SafeFontName(string name)
+        {
+            return string.IsNullOrWhiteSpace(name) ? "\u0000mixed" : name;
+        }
+
+        private static float SafeSize(float size)
+        {
+            return size >= WordFormatUtils.UndefinedFloat ? -1f : size;
         }
 
         /// <summary>段落内数学区之外的文本子区间（含段落标记）。无公式时返回整个段落。</summary>
