@@ -5,8 +5,9 @@ using NetOffice.WordApi.Enums;
 namespace TypeRight.Formatting
 {
     /// <summary>
-    /// 示例文档生成器：故意用"脏"直接格式（字体混排、字号不一、纯文本公式、表格），
-    /// 让用户在零风险环境里体验"扫描 → 确认 → 一键重排 → Ctrl+Z 撤销"的完整流程。
+    /// 示例/测试文档生成器（PRD v2 黄金样本）：用直接格式构造出明确的签名分组——
+    /// 主标题(22pt 粗 深蓝)、模块标题×2(15pt 粗 深蓝)、小节标题×3(12.5pt 粗 中蓝)、
+    /// 正文若干(10.5pt)、图注(9pt 灰)、表格。同类选择的命中数可精确断言。
     /// </summary>
     public static class SampleDocBuilder
     {
@@ -17,27 +18,39 @@ namespace TypeRight.Formatting
 
             Range rng = doc.Range(0, 0);
 
-            // 主标题：直接格式 22pt 加粗
-            AddPara(rng, "一元二次方程讲义（TypeRight 示例文档）", r => { r.Font.Size = 22; r.Font.Bold = -1; });
+            // 主标题：22pt 加粗 深蓝
+            AddPara(rng, "一元二次方程讲义（TypeRight 示例）", r =>
+            {
+                r.Font.Size = 22;
+                r.Font.Bold = -1;
+                r.Font.Color = WdColor.wdColorDarkBlue;
+            });
+
             AddPara(rng, "", null);
-            // 一级标题（纯文本无格式）
-            AddPara(rng, "第一章 方程与函数", null);
-            AddPara(rng, "1.1 一元二次方程的定义", null);
 
-            // 正文：混排 + 纯文本公式
-            AddPara(rng, "对于方程 ax² + bx + c = 0，其中 a≠0，我们称 x₁ 和 x₂ 为它的两个根。判别式 Δ = b² - 4ac 决定根的个数。", null);
-            AddPara(rng, "只含一个未知数，且未知数的最高次数是 2 的整式方程叫作一元二次方程。标准形式中 a、b、c 分别称为二次项系数、一次项系数和常数项。", null);
+            // 模块标题 ×2：15pt 加粗 深蓝（与主标题仅字号不同 → 演示「忽略字号」）
+            AddPara(rng, "模块一：一元二次方程的本质", r =>
+            {
+                r.Font.Size = 15;
+                r.Font.Bold = -1;
+                r.Font.Color = WdColor.wdColorDarkBlue;
+            });
+            AddPara(rng, "模块二：解法全景与选择", r =>
+            {
+                r.Font.Size = 15;
+                r.Font.Bold = -1;
+                r.Font.Color = WdColor.wdColorDarkBlue;
+            });
 
-            AddPara(rng, "1.1.2 根的判别", null);
+            // 小节标题 ×3：12.5pt 加粗 中蓝
+            AddPara(rng, "1.1 一元二次方程的标准定义", SectionFormat);
+            AddPara(rng, "1.1.2 根的判别", SectionFormat);
+            AddPara(rng, "1.2 四大解法剖析", SectionFormat);
+
+            // 正文 ×4：10.5pt 无格式（其中混入纯文本公式与局部加粗）
+            AddPara(rng, "对于方程 ax² + bx + c = 0，其中 a≠0，我们称 x₁ 和 x₂ 为它的两个根。", null);
+            AddPara(rng, "只含一个未知数，且未知数的最高次数是 2 的整式方程叫作一元二次方程。", null);
             AddPara(rng, "将各项系数代入求根公式(-b±√(b²-4ac))/(2a)即可求出两根。", null);
-
-            // 独立公式行
-            AddPara(rng, "x₁² + x₂² = (x₁ + x₂)² - 2x₁x₂", null);
-
-            AddPara(rng, "图 1 一元二次函数的图像", null);
-            AddPara(rng, "模块二：例题精讲", null);
-
-            // 局部加粗强调
             AddPara(rng, "例 1：解方程 x² - 5x + 6 = 0。解题关键是判别式与求根公式的应用。", r =>
             {
                 var word = r.Duplicate;
@@ -50,16 +63,28 @@ namespace TypeRight.Formatting
                 }
             });
 
-            AddPara(rng, "一元二次方程的求根公式最早出现在公元 9 世纪波斯数学家花拉子米的《代数学》中，是中学代数的核心内容之一。", null);
-            AddPara(rng, "表 1 系数含义", null);
+            // 独立公式行（正文签名）
+            AddPara(rng, "x₁² + x₂² = (x₁ + x₂)² - 2x₁x₂", null);
+
+            // 图注：9pt 灰
+            AddPara(rng, "图 1 一元二次函数的图像", r =>
+            {
+                r.Font.Size = 9;
+                r.Font.Color = WdColor.wdColorGray50;
+            });
 
             AddTable(doc, rng);
 
-            AddPara(rng, "第二章 二次函数与方程的关系", null);
-            AddPara(rng, "二次函数 y = ax² + bx + c 的图像与 x 轴的交点个数，恰好对应一元二次方程 ax² + bx + c = 0 的实根个数：Δ > 0 时有两个交点，Δ = 0 时有一个，Δ < 0 时没有交点。这就是数形结合的基本思想。", null);
             AddPara(rng, "综上，理解判别式的几何意义，是掌握二次函数与一元二次方程内在联系的关键一步。", null);
 
             return doc;
+        }
+
+        private static void SectionFormat(Range r)
+        {
+            r.Font.Size = 12.5f;
+            r.Font.Bold = -1;
+            r.Font.Color = WdColor.wdColorBlue;
         }
 
         private static void AddPara(Range rng, string text, Action<Range> format)

@@ -1,188 +1,169 @@
 using System;
-using System.IO;
+using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 using Xunit;
 using TypeRight.Formatting;
-using TypeRight.Llm;
-using TypeRight.Mixing;
 using TypeRight.Profiles;
-using TypeRight.Roles;
+using TypeRight.Signature;
 
 namespace TypeRight.Tests
 {
-    public class ProfileTests
+    public class FormatSignatureTests
     {
-        [Fact]
-        public void BuiltinProfileLoadsAndValidates()
+        private static FormatSignature Sig(double size = 10.5, bool bold = false, int color = -1,
+            string east = "宋体", string latin = "Times New Roman", string align = "l", int italic = 0)
         {
-            var p = ProfileStore.BuiltInProfile;
-            Assert.Equal("academic-lecture", p.Id);
-            Assert.Empty(ProfileValidator.Validate(p));
-            Assert.Equal("宋体", p.Roles["body"].EastAsiaFont);
-            Assert.Equal("Times New Roman", p.Roles["body"].LatinFont);
-            Assert.Equal(1.5, p.Roles["body"].LineSpacing);
-            Assert.Equal("Heading 1", p.Roles["heading1"].WordStyle);
-        }
-
-        [Fact]
-        public void MissingBodyRoleRejected()
-        {
-            var p = new Profile { Id = "x", Name = "x", SchemaVersion = 1 };
-            p.Roles["title"] = new RoleFormat();
-            Assert.NotEmpty(ProfileValidator.Validate(p));
-        }
-
-        [Fact]
-        public void BadColorAndSizeRejected()
-        {
-            var p = new Profile { Id = "x", Name = "x" };
-            p.Roles["body"] = new RoleFormat { Color = "123456", SizePt = -3 };
-            var errors = ProfileValidator.Validate(p);
-            Assert.Contains(errors, e => e.Contains("color"));
-            Assert.Contains(errors, e => e.Contains("sizePt"));
-        }
-
-        [Fact]
-        public void UnknownRoleKeyRejected()
-        {
-            var p = new Profile { Id = "x", Name = "x" };
-            p.Roles["body"] = new RoleFormat();
-            p.Roles["whatever"] = new RoleFormat();
-            var errors = ProfileValidator.Validate(p);
-            Assert.Contains(errors, e => e.Contains("whatever"));
-        }
-
-        [Fact]
-        public void JsonRoundTripKeepsCamelCase()
-        {
-            var p = ProfileStore.BuiltInProfile;
-            string json = JsonConvert.SerializeObject(p);
-            Assert.Contains("\"schema_version\"", json);
-            Assert.Contains("\"eastAsiaFont\"", json);
-            var p2 = JsonConvert.DeserializeObject<Profile>(json);
-            Assert.Equal(p.Roles.Count, p2.Roles.Count);
-            Assert.Equal("黑体", p2.Roles["heading1"].EastAsiaFont);
-        }
-
-        [Fact]
-        public void RoleKeyParsing()
-        {
-            Assert.Equal(ParagraphRole.Heading2, ParagraphRoles.TryParse("heading2"));
-            Assert.Equal(ParagraphRole.TableText, ParagraphRoles.TryParse("tableText"));
-            Assert.Null(ParagraphRoles.TryParse("bogus"));
-            Assert.Null(ParagraphRoles.TryParse(""));
-            Assert.Equal("tableText", ParagraphRole.TableHeader.FormatKey());
-            Assert.Equal("heading1", ParagraphRole.Heading1.FormatKey());
-        }
-
-        [Fact]
-        public void SaveRejectsInvalidProfileWithoutWritingFile()
-        {
-            var store = new ProfileStore();
-            var bad = new Profile { Id = "bad", Name = "坏方案" };
-            bad.Roles["title"] = new RoleFormat { Color = "#ZZZZZZ" }; // 缺 body + 颜色非法
-            Assert.Throws<ProfileValidationException>(() => store.Save(bad));
-            Assert.False(File.Exists(Path.Combine(ProfileStore.ProfilesDirectory, "bad.json")));
-        }
-    }
-
-    public class AutoSpacerTests
-    {
-        [Fact]
-        public void InsertSpaceBetweenHanAndLatin()
-        {
-            Assert.Equal("中文 English 中文", AutoSpacer.Apply("中文English中文", true, PunctuationMode.None));
-            Assert.Equal("电压 220V 稳定", AutoSpacer.Apply("电压220V稳定", true, PunctuationMode.None));
-        }
-
-        [Fact]
-        public void Idempotent()
-        {
-            string once = AutoSpacer.Apply("中文English混排 220V电压", true, PunctuationMode.None);
-            string twice = AutoSpacer.Apply(once, true, PunctuationMode.None);
-            Assert.Equal(once, twice);
-        }
-
-        [Fact]
-        public void NoSpaceInsideEnglishOrBetweenCjkPunctuation()
-        {
-            Assert.Equal("Hello World", AutoSpacer.Apply("Hello World", true, PunctuationMode.None));
-            Assert.Equal("全角。标点，中文", AutoSpacer.Apply("全角。标点，中文", true, PunctuationMode.None));
-        }
-
-        [Fact]
-        public void FullwidthPunctuationInCjkContext()
-        {
-            var result = AutoSpacer.Apply("甲说:你好。", false, PunctuationMode.Fullwidth);
-            Assert.Equal("甲说：你好。", result);
-        }
-
-        [Fact]
-        public void DecimalPointProtected()
-        {
-            Assert.Equal("圆周率是 3.14 左右", AutoSpacer.Apply("圆周率是3.14左右", true, PunctuationMode.Fullwidth));
-        }
-
-        [Fact]
-        public void FullwidthIdempotent()
-        {
-            string once = AutoSpacer.Apply("甲说:你好，乙答:再见3.14", false, PunctuationMode.Fullwidth);
-            string twice = AutoSpacer.Apply(once, false, PunctuationMode.Fullwidth);
-            Assert.Equal(once, twice);
-        }
-    }
-
-    public class LlmClientTests
-    {
-        [Fact]
-        public void RequestBodyShape()
-        {
-            var items = new[] { new ParagraphGuessInput { Index = 7, Text = "1.1 背景", FeatureSummary = "len=6;size=12;bold=1" } };
-            string body = LlmClient.BuildRequestBody("test-model", items);
-            Assert.Contains("\"model\":\"test-model\"", body);
-            // user 消息内容是内嵌 JSON 字符串（外层序列化时引号被转义）
-            Assert.Contains("\\\"i\\\":7", body);
-            Assert.Contains("heading1", body); // system prompt 提到角色集
-        }
-
-        [Fact]
-        public void ParsePlainJsonResponse()
-        {
-            var roles = LlmClient.ParseResponse("{\"results\":[{\"i\":1,\"role\":\"heading2\"},{\"i\":2,\"role\":\"body\"}]}");
-            Assert.Equal(2, roles.Count);
-            Assert.Equal("heading2", roles[0].Role);
-        }
-
-        [Fact]
-        public void ParseResponseWithProseWrapping()
-        {
-            var roles = LlmClient.ParseResponse("好的，结果如下：\n```json\n{\"results\":[{\"i\":9,\"role\":\"caption\"}]}\n```");
-            Assert.Single(roles);
-            Assert.Equal("caption", roles[0].Role);
-        }
-
-        [Fact]
-        public void ResolverFallsBackOnError()
-        {
-            var resolver = new AmbiguityResolver(new LlmConfig { Enabled = true, BaseUrl = "http://localhost:1/v1", Model = "m", TimeoutSeconds = 1 });
-            var features = new System.Collections.Generic.List<TypeRight.Scanning.ParagraphFeatures>
+            return new FormatSignature
             {
-                new TypeRight.Scanning.ParagraphFeatures { Index = 1, Text = "一段正文" }
+                EastAsiaFont = east, LatinFont = latin, SizePt = size,
+                BoldRaw = bold ? -1 : 0, ItalicRaw = italic, ColorRgb = color, Alignment = align
             };
-            TypeRight.Classification.RoleClassifier.Classify(features);
-            var result = resolver.Resolve(features);
-            Assert.False(result.UsedLlm);
-            Assert.NotNull(result.Error);
-            Assert.Equal(ParagraphRole.Body, features[0].Role); // 回落规则结果
         }
 
         [Fact]
-        public void DisabledResolverDoesNothing()
+        public void StrictEqualityAllDims()
         {
-            var resolver = new AmbiguityResolver(new LlmConfig { Enabled = false });
-            var result = resolver.Resolve(new System.Collections.Generic.List<TypeRight.Scanning.ParagraphFeatures>());
-            Assert.False(result.UsedLlm);
+            Assert.True(Sig().Equals(Sig()));
+            Assert.False(Sig().Equals(Sig(size: 12)));
+            Assert.False(Sig().Equals(Sig(bold: true)));
+            Assert.False(Sig().Equals(Sig(color: 0xFF0000)));
+            Assert.False(Sig().Equals(Sig(east: "黑体")));
+            Assert.False(Sig().Equals(Sig(align: "c")));
+            // 字体名大小写不敏感
+            Assert.True(Sig(east: "simsun").Equals(Sig(east: "SimSun")));
+        }
+
+        [Fact]
+        public void NanSizeEqualsNan()
+        {
+            var a = Sig(); a.SizePt = double.NaN;
+            var b = Sig(); b.SizePt = double.NaN;
+            Assert.True(a.Equals(b));
+            Assert.False(a.Equals(Sig()));
+        }
+
+        [Fact]
+        public void LooseIgnoresSelectedDims()
+        {
+            var sample = Sig(size: 22, bold: true, color: 0x1A365D);
+            var module = Sig(size: 15, bold: true, color: 0x1A365D);
+            Assert.False(sample.Matches(module, FormatSignature.IgnoreDims.None), "严格模式字号不等");
+            Assert.True(sample.Matches(module, FormatSignature.IgnoreDims.SizePt), "忽略字号后命中");
+
+            var colored = Sig(size: 22, bold: true, color: 0xFF0000);
+            Assert.False(sample.Matches(colored, FormatSignature.IgnoreDims.SizePt), "颜色仍参与比较");
+            Assert.True(sample.Matches(colored, FormatSignature.IgnoreDims.SizePt | FormatSignature.IgnoreDims.Color));
+
+            var notBold = Sig(size: 22, bold: false, color: 0x1A365D);
+            Assert.True(sample.Matches(notBold, FormatSignature.IgnoreDims.Bold));
+
+            // 字体与对齐永远参与比较
+            Assert.False(sample.Matches(Sig(size: 22, bold: true, color: 0x1A365D, east: "黑体"), FormatSignature.IgnoreDims.SizePt | FormatSignature.IgnoreDims.Color | FormatSignature.IgnoreDims.Bold));
+        }
+
+        [Fact]
+        public void MatchSpecNullDimMeansIgnore()
+        {
+            var spec = new MatchSpec { EastAsiaFont = "宋体" };  // 其余维度 null = 忽略
+            Assert.True(spec.MatchesPara(Sig(size: 22, bold: true, color: 0x1A365D)));
+            Assert.True(spec.MatchesPara(Sig(size: 9)));
+            Assert.False(spec.MatchesPara(Sig(east: "黑体")));
+
+            var full = new MatchSpec { EastAsiaFont = "宋体", SizePt = 12.5, Bold = true, Color = "#2B6CB0" };
+            Assert.True(full.MatchesPara(Sig(size: 12.5, bold: true, color: 0x2B6CB0)));
+            Assert.False(full.MatchesPara(Sig(size: 12.5, bold: true, color: 0x2B6CB1)));
+            Assert.False(full.MatchesPara(Sig(size: 12.6, bold: true, color: 0x2B6CB0)));
+
+            // ignore 列表让维度失效
+            full.Ignore = new List<string> { "color" };
+            Assert.True(full.MatchesPara(Sig(size: 12.5, bold: true, color: 0x112233)));
+
+            var catchAll = new MatchSpec { CatchAll = true };
+            Assert.True(catchAll.MatchesPara(Sig()));
+        }
+    }
+
+    public class ProfileV2Tests
+    {
+        private static ProfileV2 Valid()
+        {
+            return new ProfileV2
+            {
+                Id = "math-lecture", Name = "数学讲义",
+                Rules = new List<ProfileRule>
+                {
+                    new ProfileRule { Order = 1,
+                        Match = new MatchSpec { SizePt = 15, Bold = true, Color = "#1A365D", Ignore = new List<string> { "sizePt" } },
+                        Apply = new ApplySpec { EastAsiaFont = "楷体", LatinFont = "Times New Roman" } },
+                    new ProfileRule { Order = 2,
+                        Match = new MatchSpec { CatchAll = true },
+                        Apply = new ApplySpec { EastAsiaFont = "宋体", LatinFont = "Times New Roman" } }
+                }
+            };
+        }
+
+        [Fact]
+        public void ValidProfilePasses()
+        {
+            Assert.Empty(ProfileV2Validator.Validate(Valid()));
+        }
+
+        [Fact]
+        public void FieldLevelErrors()
+        {
+            var p = Valid();
+            p.SchemaVersion = 1;
+            p.Rules[0].Order = 5;
+            p.Rules.Add(new ProfileRule { Order = 3,
+                Match = new MatchSpec { Color = "ZZZ" }, Apply = new ApplySpec { SizePt = -1 } });
+            var errors = ProfileV2Validator.Validate(p);
+
+            Assert.Contains(errors, e => e.StartsWith("schema_version:"));
+            Assert.Contains(errors, e => e.StartsWith("rules[0].order:"));
+            Assert.Contains(errors, e => e.Contains("match.color"));
+            Assert.Contains(errors, e => e.Contains("apply.sizePt"));
+            Assert.Contains(errors, e => e.Contains("catchAll") && e.Contains("末位"));
+        }
+
+        [Fact]
+        public void EmptyMatchAndApplyRejected()
+        {
+            var p = Valid();
+            p.Rules[0].Match = new MatchSpec();           // 无任何维度
+            p.Rules[1].Apply = new ApplySpec();           // 全 null
+            var errors = ProfileV2Validator.Validate(p);
+            Assert.Contains(errors, e => e.Contains("至少要有一个签名维度"));
+            Assert.Contains(errors, e => e.Contains("不会改动任何内容"));
+        }
+
+        [Fact]
+        public void JsonRoundTripKeepsNullsAndOrder()
+        {
+            ProfileV2 p = Valid();
+            p.Rules[0].Apply.SizePt = null;   // null = 保持源值，必须可序列化往返
+            string json = JsonConvert.SerializeObject(p);
+            Assert.Contains("\"schema_version\":2", json);
+
+            var back = JsonConvert.DeserializeObject<ProfileV2>(json);
+            Assert.Equal(2, back.Rules.Count);
+            Assert.Null(back.Rules[0].Apply.SizePt);
+            Assert.Null(back.Rules[0].Apply.Bold);
+            Assert.Equal("楷体", back.Rules[0].Apply.EastAsiaFont);
+            Assert.True(back.Rules[1].Match.CatchAll == true);
+            // ignore 含 sizePt，且仅含 sizePt
+            Assert.True((back.Rules[0].Match.IgnoreValue & FormatSignature.IgnoreDims.SizePt) != 0);
+            Assert.True((back.Rules[0].Match.IgnoreValue & ~(FormatSignature.IgnoreDims.SizePt | FormatSignature.IgnoreDims.Color | FormatSignature.IgnoreDims.Bold)) == 0);
+            Assert.Empty(ProfileV2Validator.Validate(back));
+        }
+
+        [Fact]
+        public void SaveRejectsInvalid()
+        {
+            var store = new ProfileStoreV2();
+            var bad = Valid();
+            bad.Id = "";
+            Assert.Throws<ProfileValidationException>(() => store.Save(bad));
         }
     }
 
@@ -191,11 +172,10 @@ namespace TypeRight.Tests
         [Fact]
         public void WdColorRoundTrip()
         {
-            // #1A365D → R=0x1A,G=0x36,B=0x5D；WdColor = BGR
             int wd = WordFormatUtils.RgbToWdColor(0x1A365D);
-            Assert.Equal(0x1A, wd & 0xFF);         // R 在低位
-            Assert.Equal(0x36, (wd >> 8) & 0xFF);  // G
-            Assert.Equal(0x5D, (wd >> 16) & 0xFF); // B
+            Assert.Equal(0x1A, wd & 0xFF);
+            Assert.Equal(0x36, (wd >> 8) & 0xFF);
+            Assert.Equal(0x5D, (wd >> 16) & 0xFF);
             Assert.Equal(0x1A365D, WordFormatUtils.WdColorToRgb(wd));
         }
 
@@ -213,14 +193,6 @@ namespace TypeRight.Tests
         {
             Assert.True(double.IsNaN(WordFormatUtils.NormalizeSize(9999999f)));
             Assert.Equal(10.5, WordFormatUtils.NormalizeSize(10.5f));
-        }
-
-        [Fact]
-        public void BuiltinStyleMapping()
-        {
-            Assert.Equal(NetOffice.WordApi.Enums.WdBuiltinStyle.wdStyleHeading1, WordFormatUtils.TryGetBuiltinStyle("Heading 1"));
-            Assert.Equal(NetOffice.WordApi.Enums.WdBuiltinStyle.wdStyleTitle, WordFormatUtils.TryGetBuiltinStyle("title"));
-            Assert.Null(WordFormatUtils.TryGetBuiltinStyle("My Custom Style"));
         }
     }
 }

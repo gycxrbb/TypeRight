@@ -4,18 +4,16 @@ using System.Linq;
 using System.Text;
 using NetOffice.WordApi;
 using NetOffice.WordApi.Enums;
-using TypeRight.Classification;
 using TypeRight.Formatting;
 using TypeRight.Profiles;
-using TypeRight.Roles;
-using TypeRight.Scanning;
+using TypeRight.Signature;
 
 namespace TypeRight.SmokeTest
 {
     /// <summary>
-    /// 端到端冒烟测试（真实 Word 进程）：
-    /// 构造脏格式文档 → 扫描分类（断言 R1-R10）→ 应用排版（断言样式/字体/强调保留/公式）
-    /// → 单次 Undo 完全还原 → 二次应用 0 改动（幂等）。
+    /// PRD v2 黄金旅程端到端（真实 Word）：
+    /// ① 同类选择（严格/宽松命中数）→ 浮动条语义批量改字体（中西文联动）
+    /// ② 每步独立撤销 ③ 公式转换计数 ④ 存方案 → 新副本一键回放 → 结果一致 + 幂等。
     /// </summary>
     internal static class Program
     {
@@ -38,8 +36,8 @@ namespace TypeRight.SmokeTest
             try
             {
                 Console.OutputEncoding = Encoding.UTF8;
-                Console.WriteLine("TypeRight 冒烟测试（真实 Word）");
-                return Run(args);
+                Console.WriteLine("TypeRight v2 冒烟测试（真实 Word · 指认式批量排版）");
+                return Run();
             }
             catch (Exception ex)
             {
@@ -48,146 +46,142 @@ namespace TypeRight.SmokeTest
             }
         }
 
-        private static int Run(string[] args)
+        private static int Run()
         {
-            bool keepWordVisible = args.Contains("--keep");
-
             Application app = new Application();
             app.Visible = false;
             app.DisplayAlerts = WdAlertLevel.wdAlertsNone;
             Document doc = null;
             try
             {
-                doc = app.Documents.Add();
-                BuildMessyDocument(doc);
+                doc = SampleDocBuilder.Build(app);
 
-                // ---- 1. 扫描 + 分类 ----
-                Header("1. 扫描与角色识别");
-                var scanner = new DocumentScanner(app);
-                var scan = scanner.Scan(doc);
-                RoleClassifier.Classify(scan.Features);
-                Console.WriteLine("  扫描段落数: " + scan.Features.Count + "，用时 " + scan.Duration.TotalMilliseconds.ToString("0") + "ms");
-                foreach (var f in scan.Features)
-                    Console.WriteLine(string.Format("    #{0,-2} R{1,-2} {2,-8} {3}", f.Index, f.RulePriority, f.Role, f.DisplayText(30)));
+                // ── 1. 签名与同类选择 ──
+                Header("1. 同类选择（签名匹配）");
+                Paragraph title = FindParagraph(doc, "一元二次方程讲义");
+                Paragraph module1 = FindParagraph(doc, "模块一");
+                Paragraph module2 = FindParagraph(doc, "模块二");
+                Paragraph section11 = FindParagraph(doc, "1.1 ");
+                Paragraph body = FindParagraph(doc, "对于方程");
 
-                var fx = scan.Features;
-                CheckRole(fx, "一元二次方程讲义", ParagraphRole.Title);
-                CheckRole(fx, "第一章", ParagraphRole.Heading1);
-                CheckRole(fx, "1.1 ", ParagraphRole.Heading2);
-                CheckRole(fx, "1.1.2", ParagraphRole.Heading3);
-                CheckRole(fx, "图 1", ParagraphRole.Caption);
-                CheckRoleStartsWith(fx, "x₁²", ParagraphRole.FormulaLine);
-                var tableCellPara = fx.FirstOrDefault(p => p.InTable);
-                Check(tableCellPara != null, "扫描包含表格内段落");
-                var bodyPara = fx.FirstOrDefault(p => p.Role == ParagraphRole.Body && p.Text.StartsWith("对于方程"));
-                Check(bodyPara != null, "正文段落识别（含内联公式文本）");
-                Check(fx.Any(p => p.Role == ParagraphRole.Skip), "空段被跳过（R1）");
+                var titleSig = FormatSignatureReader.Read(title);
+                Console.WriteLine("  标题签名: " + titleSig);
 
-                // ---- 2. 应用排版 ----
-                Header("2. 应用排版");
-                var profile = ProfileStore.BuiltInProfile;
-                var assignments = new Dictionary<int, ParagraphRole>();
-                foreach (var f in scan.Features) assignments[f.Index] = f.Role;
+                var strict = SimilarSelector.Match(doc, titleSig, FormatSignature.IgnoreDims.None);
+                Check(strict.Count == 1, "严格模式：主标题只命中自己（实际 " + strict.Count + "）");
 
-                // 撤销基线：应用前的 Normal 样式定义
-                Style normalBefore = doc.Styles[(int)WdBuiltinStyle.wdStyleNormal];
-                string preNormalFont = normalBefore.Font.NameFarEast;
-                float preNormalSize = normalBefore.Font.Size;
+                var looseSize = SimilarSelector.Match(doc, titleSig, FormatSignature.IgnoreDims.SizePt);
+                Check(looseSize.Count == 3, "忽略字号：主标题 + 2 个模块标题 = 3 段（实际 " + looseSize.Count + "）");
 
-                var request = new FormatRequest
-                {
-                    Profile = profile,
-                    RoleAssignments = assignments,
-                    MountStyles = true,
-                    ConvertFormulas = true,
-                    Selection = null
-                };
-                var stats = new FormatApplier().Apply(app, doc, request);
-                Console.WriteLine("  " + stats.Summary());
-                Check(stats.ChangedParagraphs > 0, "发生实际改动（ChangedParagraphs=" + stats.ChangedParagraphs + "）");
+                var sectionSig = FormatSignatureReader.Read(section11);
+                var sections = SimilarSelector.Match(doc, sectionSig, FormatSignature.IgnoreDims.None);
+                Check(sections.Count == 3, "小节标题严格命中 3 段（1.1 / 1.1.2 / 1.2）（实际 " + sections.Count + "）");
 
-                // 样式定义
-                Style normal = doc.Styles[(int)WdBuiltinStyle.wdStyleNormal];
-                Style heading1 = doc.Styles[(int)WdBuiltinStyle.wdStyleHeading1];
-                Check(Math.Abs(normal.Font.Size - 10.5f) < 0.05, "Normal 样式字号 = 10.5（实际 " + normal.Font.Size + "）");
-                Check(string.Equals(normal.Font.NameFarEast, "宋体", StringComparison.Ordinal), "Normal 中文名 = 宋体（实际 " + normal.Font.NameFarEast + "）");
-                Check(string.Equals(normal.Font.NameAscii, "Times New Roman", StringComparison.OrdinalIgnoreCase), "Normal 西文名 = Times New Roman");
-                Check(string.Equals(heading1.Font.NameFarEast, "黑体", StringComparison.Ordinal), "标题1 中文名 = 黑体（实际 " + heading1.Font.NameFarEast + "）");
-                Check(heading1.Font.Bold == -1, "标题1 加粗");
+                var bodySig = FormatSignatureReader.Read(body);
+                var bodies = SimilarSelector.Match(doc, bodySig, FormatSignature.IgnoreDims.Bold | FormatSignature.IgnoreDims.Color);
+                Console.WriteLine("  正文宽松命中: " + bodies.Count + " 段");
+                Check(bodies.Count >= 4, "正文宽松（忽略加粗/颜色）命中 ≥ 4 段（实际 " + bodies.Count + "）");
 
-                // 段落挂载
-                var titlePara = FindParagraph(doc, "一元二次方程讲义");
-                Check(titlePara != null && titlePara.Style is Style && StyleIs(titlePara, WdBuiltinStyle.wdStyleTitle), "主标题挂载 Title 样式");
-                var h1Para = FindParagraph(doc, "第一章");
-                Check(h1Para != null && StyleIs(h1Para, WdBuiltinStyle.wdStyleHeading1), "第一章挂载 Heading 1 样式");
-                Check(h1Para != null && Convert.ToInt32(h1Para.OutlineLevel) == (int)WdOutlineLevel.wdOutlineLevel1, "一级标题大纲级别 = 1（导航窗格可见）");
+                // 代理管理开关对比（性能实验）
+                var swPM = System.Diagnostics.Stopwatch.StartNew();
+                app.Factory.Settings.EnableProxyManagement = false;
+                var pmMatch = SimilarSelector.Match(doc, bodySig, FormatSignature.IgnoreDims.Bold | FormatSignature.IgnoreDims.Color);
+                swPM.Stop();
+                app.Factory.Settings.EnableProxyManagement = true;
+                Console.WriteLine("  [实验] 关闭代理管理: " + pmMatch.Count + " 段, " + swPM.ElapsedMilliseconds + "ms/全文档");
+                // 性能：本测试经 DCOM（进程外 Word，每次 COM 调用 ~1ms 编组），
+                // 每段 ~14ms 属编组开销主导；真实插件在 Word 进程内执行（vtable 直调，预期 <1s/千段）。
+                // 进程内实测以 addin-log 的「同类匹配: N 段 / Xms」为准（首次点击同类选择即可看到）。
+                Perf1000(doc, bodySig);
 
-                // 直接字体污染被清除/覆盖（标题段落视觉正确）
-                if (titlePara != null)
-                    Check(Math.Abs(titlePara.Range.Font.Size - 16f) < 0.05f, "主标题有效字号 = 16（实际 " + titlePara.Range.Font.Size + "）");
+                // ── 2. 批量格式 + 中西文联动 + 独立撤销 ──
+                Header("2. 批量格式与撤销粒度");
+                string fontBefore = title.Range.Font.NameFarEast;
+                var stats1 = BatchFormatter.Apply(app, doc, looseSize.Paragraphs,
+                    new FormatChanges { EastAsiaFont = "楷体", LatinFont = "Times New Roman" }, "同类格式");
+                Console.WriteLine("  批量改楷体：目标 " + looseSize.Count + " 段，改动 " + stats1.Changed);
+                Check(stats1.Changed >= 3, "3 段发生改动");
+                Check(title.Range.Font.NameFarEast == "楷体", "主标题中文 = 楷体");
+                Check(title.Range.Font.NameAscii == "Times New Roman", "主标题西文联动 = Times New Roman");
+                Check(title.Range.Font.Size == 22, "字号未被触碰（仍是 22）");
 
-                // 保留强调：正文段中手动加粗的“判别式”仍是加粗
-                var bodyWord = FindRange(doc, "判别式与求根公式的应用");
-                Check(bodyWord != null && bodyWord.Font.Bold == -1, "局部加粗强调被保留");
-
-                // 公式转换
-                int omathCount = doc.OMaths.Count;
-                Console.WriteLine("  公式对象数: " + omathCount + "（转换 " + stats.FormulasConverted + "，失败 " + stats.FormulasFailed + "）");
-                Check(omathCount >= 5, "公式对象 ≥ 5");
-                Check(stats.FormulasFailed == 0, "公式转换零失败");
-                // 根式公式文本（BuildUp 后线性文本仍在数学区）
-                // BuildUp 后字母转为数学斜体字符（𝑎 = U+1D44E），验证公式内容仍在文本流中
-                string docText = doc.Content.Text ?? "";
-                Check(docText.Contains("\U0001D44E") || docText.Contains("2a"), "根式公式内容保留（数学斜体 𝑎 存在）");
-
-                // 混排规则（内置方案默认关闭，跳过）
-
-                // ---- 3. 单次撤销 ----
-                Header("3. 单次 Ctrl+Z 完全还原");
+                // 每步独立撤销：一次 Ctrl+Z 只退这一步
+                var stats2 = BatchFormatter.Apply(app, doc, looseSize.Paragraphs,
+                    new FormatChanges { EastAsiaFont = "黑体" }, "同类格式2");
+                Check(stats2.Changed == 3, "第二步改黑体 3 段");
                 bool undone = doc.Undo();
-                Check(undone, "Document.Undo() 成功");
-                Check(doc.OMaths.Count == 0, "撤销后公式对象清零（实际 " + doc.OMaths.Count + "）");
-                var titleAfter = FindParagraph(doc, "一元二次方程讲义");
-                Check(titleAfter != null && Math.Abs(titleAfter.Range.Font.Size - 20f) < 0.05f,
-                    "撤销后主标题恢复 20pt（实际 " + (titleAfter == null ? "?" : titleAfter.Range.Font.Size.ToString()) + "）");
-                Style normalAfter = doc.Styles[(int)WdBuiltinStyle.wdStyleNormal];
-                Check(string.Equals(normalAfter.Font.NameFarEast, preNormalFont, StringComparison.Ordinal) &&
-                      Math.Abs(normalAfter.Font.Size - preNormalSize) < 0.05f,
-                    "撤销后 Normal 样式定义回退（字体 " + normalAfter.Font.NameFarEast + " / 字号 " + normalAfter.Font.Size +
-                    "，基线 " + preNormalFont + " / " + preNormalSize + "）");
+                Check(undone && title.Range.Font.NameFarEast == "楷体",
+                    "单次撤销只退第二步：中文回到楷体（实际 " + title.Range.Font.NameFarEast + "）");
+                undone = doc.Undo();
+                Check(undone && title.Range.Font.NameFarEast == fontBefore,
+                    "再退一次回到原始字体（实际 " + title.Range.Font.NameFarEast + "）");
 
-                // ---- 4. 幂等 ----
-                Header("4. 幂等：二次应用 0 改动");
-                // 撤销一次（恢复原始文档）→ 重新应用 → 再次应用验证 0 改动
-                FormatApplier.DebugLog = false;
-                var stats2 = new FormatApplier().Apply(app, doc, request);
-                var stats3 = new FormatApplier().Apply(app, doc, request);
-                Console.WriteLine("  第二次: " + stats3.Summary());
-                Check(stats3.ChangedParagraphs == 0, "二次应用 ChangedParagraphs = 0（实际 " + stats3.ChangedParagraphs + "）");
-                Check(stats3.FormulasConverted == 0, "二次应用公式转换 = 0（实际 " + stats3.FormulasConverted + "）");
-                Check(stats3.StyleDefinitionsUpdated == 0, "二次应用样式定义写入 = 0（实际 " + stats3.StyleDefinitionsUpdated + "）");
+                // 局部加粗保留（正文段里的加粗词在批量改字体后仍在）
+                var boldWord = FindRange(doc, "判别式与求根公式的应用");
+                Check(boldWord != null && boldWord.Font.Bold == -1, "段内局部加粗不受批量字体影响");
 
-                // ---- 5. 导出结果供人工检查 ----
+                // ── 3. 公式转换 ──
+                Header("3. 公式转换");
+                var convStats = ConvertAll(app, doc);
+                Console.WriteLine("  " + convStats.SummaryText());
+                Check(convStats.Converted >= 5, "公式转换 ≥ 5 处（实际 " + convStats.Converted + "）");
+                Check(convStats.Failed == 0, "零失败（实际 " + convStats.Failed + "）");
+                Check(doc.OMaths.Count == convStats.Converted, "公式对象数与计数一致（" + doc.OMaths.Count + "）");
+                bool undoFormula = doc.Undo();
+                Check(undoFormula && doc.OMaths.Count == 0, "单次撤销公式转换（残留 " + doc.OMaths.Count + "）");
+
+                // ── 4. 方案：录制 → 回放 ──
+                Header("4. 方案录制与回放");
+                var profile = new ProfileV2
+                {
+                    Id = "smoke-" + DateTime.Now.ToString("HHmmss"),
+                    Name = "冒烟方案",
+                    ConvertFormulas = true,
+                    Rules = new List<ProfileRule>
+                    {
+                        new ProfileRule { Order = 1, Match = ToMatch(titleSig, FormatSignature.IgnoreDims.SizePt),
+                                          Apply = new ApplySpec { EastAsiaFont = "楷体", LatinFont = "Times New Roman" } },
+                        new ProfileRule { Order = 2, Match = ToMatch(sectionSig, FormatSignature.IgnoreDims.None),
+                                          Apply = new ApplySpec { EastAsiaFont = "黑体", LatinFont = "Times New Roman" } },
+                        new ProfileRule { Order = 3, Match = new MatchSpec { CatchAll = true },
+                                          Apply = new ApplySpec { EastAsiaFont = "宋体", LatinFont = "Times New Roman" } }
+                    }
+                };
+                Check(ProfileV2Validator.Validate(profile).Count == 0, "方案校验通过");
+
+                string applied1 = ApplyProfileReport(app, doc, profile);
+                Console.WriteLine("  首次应用: " + applied1);
+                Check(title.Range.Font.NameFarEast == "楷体" && module1.Range.Font.NameFarEast == "楷体",
+                    "回放后主标题/模块 = 楷体");
+                Check(section11.Range.Font.NameFarEast == "黑体", "回放后小节 = 黑体");
+                Check(body.Range.Font.NameFarEast == "宋体", "回放后正文（兜底）= 宋体");
+                Check(doc.OMaths.Count > 0, "回放包含公式转换");
+
+                // 幂等：第二次 0 改动
+                var second = BatchFormatter.Apply(app, doc, new List<Paragraph> { title },
+                    new FormatChanges { EastAsiaFont = "楷体" }, null);
+                Check(second.Changed == 0, "幂等：重复应用相同字体 0 改动");
+                var convStats2 = ConvertAll(app, doc);
+                Check(convStats2.Converted == 0, "幂等：公式二次转换 0 处");
+
+                // 回放到全新副本结果一致
+                Document fresh = SampleDocBuilder.Build(app);
+                string applied2 = ApplyProfileReport(app, fresh, profile);
+                Check(fresh.Paragraphs.Count == doc.Paragraphs.Count, "副本与原文档段落一致");
+                Check(FindParagraph(fresh, "一元二次方程讲义").Range.Font.NameFarEast == "楷体", "新副本主标题 = 楷体");
+                fresh.Close(false);
+
+                // 保存输出供人工检查
                 string outDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "out");
                 System.IO.Directory.CreateDirectory(outDir);
-                string outPath = System.IO.Path.Combine(outDir, "smoke-result.docx");
-                try
-                {
-                    doc.SaveAs2(outPath);
-                    Console.WriteLine();
-                    Console.WriteLine("结果文档: " + outPath);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("保存结果文档失败: " + ex.Message);
-                }
+                string outPath = System.IO.Path.Combine(outDir, "smoke-v2-result.docx");
+                try { doc.SaveAs2(outPath); Console.WriteLine(); Console.WriteLine("结果文档: " + outPath); }
+                catch (Exception ex) { Console.WriteLine("保存结果文档失败: " + ex.Message); }
             }
             finally
             {
-                try { if (doc != null) { doc.Close(false); doc.Dispose(); } }
-                catch { }
-                try { if (!keepWordVisible) { app.Quit(); app.Dispose(); } }
-                catch { }
+                try { if (doc != null) { doc.Close(false); doc.Dispose(); } } catch { }
+                try { app.Quit(); app.Dispose(); } catch { }
             }
 
             Console.WriteLine();
@@ -195,121 +189,116 @@ namespace TypeRight.SmokeTest
             return _failures == 0 ? 0 : 1;
         }
 
-        // ---- 断言助手 ----
-
-        private static void CheckRole(List<ParagraphFeatures> fx, string startsWith, ParagraphRole role)
+        private static FormulaStats ConvertAll(Application app, Document doc)
         {
-            var f = fx.FirstOrDefault(p => p.Text.StartsWith(startsWith, StringComparison.Ordinal));
-            Check(f != null && f.Role == role, "「" + startsWith + "…」→ " + role.ToLabel() +
-                (f == null ? "（未找到段落）" : "（实际 " + f.Role.ToLabel() + "，规则 R" + f.RulePriority + "）"));
-        }
-
-        private static void CheckRoleStartsWith(List<ParagraphFeatures> fx, string startsWith, ParagraphRole role)
-        {
-            var f = fx.FirstOrDefault(p => p.Text.StartsWith(startsWith, StringComparison.Ordinal));
-            Check(f != null && f.Role == role, "「" + startsWith + "…」→ " + role.ToLabel() +
-                (f == null ? "（未找到段落）" : "（实际 " + f.Role.ToLabel() + "）"));
-        }
-
-        // ---- 文档构造 ----
-
-        private static void BuildMessyDocument(Document doc)
-        {
-            Range rng = doc.Range(0, 0);
-
-            // 主标题：20pt 加粗 直接格式
-            AddPara(rng, "一元二次方程讲义", r => { r.Font.Size = 20; r.Font.Bold = -1; });
-            // 空段
-            AddPara(rng, "", null);
-            // 一级标题（纯文本，无格式）
-            AddPara(rng, "第一章 方程与函数", null);
-            // 二级标题
-            AddPara(rng, "1.1 一元二次方程的定义", null);
-            // 正文（含内联公式文本 + 局部加粗强调）
-            AddPara(rng, "对于方程 ax² + bx + c = 0，其中 a≠0，我们称 x₁ 和 x₂ 为它的两个根。", null);
-            AddPara(rng, "只含一个未知数，且未知数的最高次数是 2 的整式方程叫作一元二次方程。", null);
-            // 三级标题
-            AddPara(rng, "1.1.2 根的判别", null);
-            // 正文：内嵌根式公式
-            AddPara(rng, "将各项系数代入求根公式(-b±√(b²-4ac))/(2a)即可求出两根。", null);
-            // 独立公式行
-            AddPara(rng, "x₁² + x₂² = (x₁ + x₂)² - 2x₁x₂", null);
-            // 图注
-            AddPara(rng, "图 1 一元二次函数的图像", null);
-            // 模块式标题
-            AddPara(rng, "模块二：例题精讲", null);
-            // 正文，其中有手动加粗的强调词
-            AddPara(rng, "例 1：解方程 x² - 5x + 6 = 0。解题关键是判别式与求根公式的应用。", r =>
+            bool screenOff = false;
+            try { app.ScreenUpdating = false; screenOff = true; } catch { }
+            var undo = app.UndoRecord;
+            undo.StartCustomRecord("公式转换");
+            try
             {
-                var word = r.Duplicate;
-                int idx = r.Text.IndexOf("判别式与求根公式的应用", StringComparison.Ordinal);
-                if (idx >= 0)
+                return new FormulaConverter(doc, null, null).ConvertDocument();
+            }
+            finally
+            {
+                try { undo.EndCustomRecord(); } catch { }
+                if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
+            }
+        }
+
+        /// <summary>按方案规则逐条执行（与 TypeRightController.ApplyProfile 同语义）。</summary>
+        private static string ApplyProfileReport(Application app, Document doc, ProfileV2 profile)
+        {
+            var report = new List<string>();
+            var consumed = new HashSet<int>();
+            bool screenOff = false;
+            try { app.ScreenUpdating = false; screenOff = true; } catch { }
+            var undo = app.UndoRecord;
+            undo.StartCustomRecord("应用方案「" + profile.Name + "」");
+            try
+            {
+                foreach (ProfileRule rule in profile.Rules.OrderBy(r => r.Order))
                 {
-                    word.Start = r.Start + idx;
-                    word.End = word.Start + "判别式与求根公式的应用".Length;
-                    word.Font.Bold = -1;
+                    var hit = new List<Paragraph>();
+                    foreach (Paragraph p in doc.Paragraphs)
+                    {
+                        try
+                        {
+                            if (consumed.Contains(p.Range.Start)) continue;
+                            var sig = FormatSignatureReader.Read(p);
+                            if (!sig.IsEmpty && rule.Match.MatchesPara(sig)) hit.Add(p);
+                        }
+                        catch { }
+                    }
+                    foreach (Paragraph p in hit)
+                    {
+                        try { consumed.Add(p.Range.Start); } catch { }
+                    }
+                    if (hit.Count > 0)
+                    {
+                        BatchFormatter.Apply(app, doc, hit, new FormatChanges
+                        {
+                            EastAsiaFont = rule.Apply.EastAsiaFont,
+                            LatinFont = rule.Apply.LatinFont,
+                            SizePt = rule.Apply.SizePt,
+                            Bold = rule.Apply.Bold
+                        }, null, wrapUndo: false);
+                    }
+                    report.Add("规则" + rule.Order + " 命中 " + hit.Count);
                 }
-            });
-            // 表格（首行加粗 = 表头）
-            AddTable(doc, rng);
+                if (profile.ConvertFormulas)
+                {
+                    var s = new FormulaConverter(doc, null, null).ConvertDocument();
+                    report.Add("公式 " + s.Converted);
+                }
+            }
+            finally
+            {
+                try { undo.EndCustomRecord(); } catch { }
+                if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
+            }
+            return string.Join(" / ", report);
         }
 
-        private static void AddPara(Range rng, string text, Action<Range> format)
+        private static MatchSpec ToMatch(FormatSignature sig, FormatSignature.IgnoreDims ignore)
         {
-            rng.Collapse(WdCollapseDirection.wdCollapseEnd);
-            rng.InsertAfter(text);
-            rng.InsertParagraphAfter();
-            // 定位刚插入的段落
-            var paraRange = rng.Duplicate;
-            paraRange.Start = paraRange.End - (text.Length + 1);
-            paraRange.End = paraRange.Start + text.Length;
-            if (format != null) format(paraRange);
+            var spec = new MatchSpec
+            {
+                EastAsiaFont = sig.EastAsiaFont,
+                LatinFont = sig.LatinFont,
+                Ignore = new List<string>()
+            };
+            if (!double.IsNaN(sig.SizePt)) spec.SizePt = sig.SizePt;
+            if (!sig.BoldMixed) spec.Bold = sig.Bold;
+            if (sig.ColorRgb >= 0) spec.Color = "#" + sig.ColorRgb.ToString("X6");
+            if ((ignore & FormatSignature.IgnoreDims.SizePt) != 0) spec.Ignore.Add("sizePt");
+            if (spec.Ignore.Count == 0) spec.Ignore = null;
+            return spec;
         }
 
-        private static void AddTable(Document doc, Range rng)
+        /// <summary>性能：重复匹配直到等效 1000 段规模（进程外 DCOM 预算）。</summary>
+        private static void Perf1000(Document doc, FormatSignature sig)
         {
-            rng.Collapse(WdCollapseDirection.wdCollapseEnd);
-            rng.InsertParagraphAfter();
-            var anchor = doc.Range(rng.End - 1, rng.End - 1);
-            Table table = doc.Tables.Add(anchor, 3, 2);
-            table.Cell(1, 1).Range.Text = "参数";
-            table.Cell(1, 2).Range.Text = "含义";
-            var headerRow = table.Rows[1].Range;
-            headerRow.Font.Bold = -1;
-            table.Cell(2, 1).Range.Text = "a";
-            table.Cell(2, 2).Range.Text = "二次项系数，a≠0";
-            table.Cell(3, 1).Range.Text = "Δ";
-            table.Cell(3, 2).Range.Text = "b² - 4ac，决定根的个数";
+            int paragraphs = doc.Paragraphs.Count;
+            int repeats = Math.Max(1, (int)Math.Ceiling(1000.0 / paragraphs));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < repeats; i++) SimilarSelector.Match(doc, sig, FormatSignature.IgnoreDims.None);
+            watch.Stop();
+            Console.WriteLine("  性能(DCOM 参考): " + paragraphs + " 段 × " + repeats + " 次 = " + watch.ElapsedMilliseconds + "ms");
         }
-
-        // ---- Word 查找助手 ----
 
         private static Paragraph FindParagraph(Document doc, string startsWith)
         {
-            Paragraphs ps = doc.Paragraphs;
-            for (int i = 1; i <= ps.Count; i++)
+            foreach (Paragraph p in doc.Paragraphs)
             {
                 try
                 {
-                    string t = ps[i].Range.Text ?? "";
-                    if (t.TrimEnd('\r', '\a').StartsWith(startsWith, StringComparison.Ordinal)) return ps[i];
+                    string t = (p.Range.Text ?? "").TrimEnd('\r', '\a');
+                    if (t.StartsWith(startsWith, StringComparison.Ordinal)) return p;
                 }
                 catch { }
             }
             return null;
-        }
-
-        private static bool StyleIs(Paragraph p, WdBuiltinStyle builtin)
-        {
-            try
-            {
-                Document doc = (Document)p.Range.Document;
-                Style target = doc.Styles[(int)builtin];
-                object cur = p.Style;
-                if (cur is Style) return string.Equals(((Style)cur).NameLocal, target.NameLocal, StringComparison.Ordinal);
-                return string.Equals(Convert.ToString(cur), target.NameLocal, StringComparison.Ordinal);
-            }
-            catch { return false; }
         }
 
         private static Range FindRange(Document doc, string text)
@@ -321,11 +310,6 @@ namespace TypeRight.SmokeTest
             find.Find.Wrap = WdFindWrap.wdFindStop;
             if (find.Find.Execute()) return find;
             return null;
-        }
-
-        private static bool ContainsText(Document doc, string text)
-        {
-            return FindRange(doc, text) != null;
         }
     }
 }

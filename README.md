@@ -1,78 +1,61 @@
 # TypeRight — Word 智能排版插件
 
-> 一键完成「识别段落语义角色 → 按排版方案批量重排 → 纯文本公式转公式对象」，全程可预览、一次 Ctrl+Z 完全撤销。
-
-基于 PRD《Word智能排版插件_PRD.md》开发。当前覆盖里程碑 M1–M4 主体 + M5 的 LLM 客户端（默认关闭）。
+> **指认一个样本 → 一键选中全文同类段落 → 统一改格式**；公式一键转公式对象；操作可存为方案复用。
+> PRD v2.0（见根目录 PRD 文档）。设计原则：所见即所得、最小界面（Ribbon 3 按钮 + 右键菜单）、确定性签名匹配、每步独立撤销、规范兜底（西文自动 TNR / 公式 Cambria Math）。
 
 ## 快速开始
 
 ```powershell
-# 安装（管理员：HKLM；非管理员：HKCU，均免 VSTO 运行时）
+# 安装（管理员：HKLM；非管理员：HKCU）
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
-
 # 卸载
 powershell -ExecutionPolicy Bypass -File tools\uninstall.ps1
 ```
 
-安装后启动 Word → 功能区「智能排版」选项卡：
+安装后启动 Word → 功能区「**TypeRight**」选项卡：
 
-- **一键智能排版**：扫描全文 → 识别段落角色 → 预览确认（可逐段改角色）→ 应用
-- **排版选区**：仅处理选中部分
-- **方案管理**：编辑 / 导入 / 导出排版方案 JSON
-- **设置**：LLM 增强识别（默认关闭，离线可用）、混排规则
+1. **同类选择**（或右键菜单同名项）：光标点进任一段落 → 点按钮 → 同款格式的段落全部高亮命中 → 段落旁浮动条上选中文字体即批量应用；命中不够就在浮动条上勾「忽略字号/颜色/加粗」实时重算
+2. **公式转换**：全文纯文本公式（`ax²+bx+c=0`）批量转 Word 公式对象，单行提示「已转换 N 处，失败 M 处」，失败原文保留并列出定位
+3. **方案**：≥2 步批量操作后可「存为方案」；下一份同类文档打开 → 方案面板 → 应用 → 规则逐条回放 + 兜底规则 + 公式转换，一个撤销单元
 
-首次建议：打开 `src\TypeRight.SmokeTest\out\smoke-result.docx`（或任意讲义/论文）→ 点「一键智能排版」。
+诊断日志：`%LOCALAPPDATA%\TypeRight\addin-log.txt`（含同类匹配耗时实测）；方案目录：`%APPDATA%\TypeRight\profiles\`。
 
-诊断日志：`%LOCALAPPDATA%\TypeRight\addin-log.txt`；方案目录：`%APPDATA%\TypeRight\profiles\`。
+## 核心机制（PRD v2 §2）
 
-## 技术形态（与 PRD 的差异说明）
-
-| PRD 原选型 | 实际实现 | 原因 |
-|---|---|---|
-| VSTO Add-in | **NetOffice COM Add-in**（`NetOffice.WordApi.Tools.COMAddin`） | 本机未装 VSTO 工具链；PRD §2.1 已将 NetOffice 列为首选（免 VSTO 运行时/免 PIA/版本无关），与 Interop API 同构、后期可低成本切换 |
-| WPF Task Pane | **NetOffice 原生 CTP 任务窗格**（WinForms UserControl + ElementHost 内嵌 WPF）+ 自动回落无模式窗口 | CTP 是 VSTO 之外唯一原生停靠窗格路径；NetOffice `Tools.COMAddin` 内建 `ICustomTaskPaneConsumer` 支持 |
-| MML2OMML.XSL 兜底管线 | **已实现** `MathmlToOmml()`（XslCompiledTransform + Office 自带 XSL）+ `WrapLinearAsMtextMathml()`；主路径 BuildUp 失败时目前**无损保留原文**（PRD §6.2 的"失败不留残骸"） | BuildUp 覆盖了 UnicodeMath 全量；MathML 生成器属于 P2 导入路径，管线本体已就绪 |
+- **格式签名**：段落首个非空 run 的有效格式元组 `(中文字体, 西文字体, 字号, 加粗, 斜体, 颜色, 对齐)`。只在首个可见字符的单字符区间上读取——段落级 Font 读取会触发 Word 全 run 聚合（长段落 ~15ms/段）
+- **同类段落**：签名全等（严格）；浮动条勾选忽略维度后实时重算（宽松）
+- **撤销粒度**：每个取值应用 = 1 个 `UndoRecord`；公式转换、应用方案各自独立
+- **中西文联动（P0-3）**：选中文字体时 `NameAscii/NameOther` 自动写 Times New Roman（设置页可关/可改）
+- **方案 Schema v2**：`rules[{order, match(签名+ignore), apply(null=保持源值)}]` + 末位 `catchAll` 兜底 + `convertFormulas`；字段级校验错误定位
 
 ## 架构
 
 ```
 src/
-├── TypeRight.Core/                  # 引擎（不依赖 UI）
-│   ├── Roles/                       # 段落角色枚举（title/heading1..3/body/caption/listItem/tableText/formulaLine/skip + tableHeader）
-│   ├── Scanning/                    # DocumentScanner（特征提取，含表格内段落）
-│   ├── Classification/              # RuleTable（R1–R10 高置信）+ ClusterAnalyzer（R11 格式聚类）+ RoleClassifier（两段式编排）
-│   ├── Formatting/                  # FormatApplier（UndoRecord 打包/幂等/保留强调）+ StyleMounter + FormulaConverter
-│   ├── Formulas/                    # MathSegmenter（切分）+ UnicodeMathMapper（线性映射）— 纯逻辑可单测
-│   ├── Mixing/                      # AutoSpacer（autocorrect/pangu 规则集移植：中西文空格 + 全半角标点）
-│   ├── Profiles/                    # ProfileSchema + 校验器 + ProfileStore + 内置方案（嵌入资源）
-│   └── Llm/                         # OpenAI 兼容客户端 + AmbiguityResolver（仅低置信段落，失败回落规则）
-├── TypeRight.Addin/                 # COM 加载项：Ribbon + CTP 任务窗格 + 预览/设置/方案编辑 WPF 界面
-└── TypeRight.SmokeTest/             # 真实 Word 端到端冒烟测试
-tests/TypeRight.Core.Tests/          # 纯逻辑单测（50 个）
-tools/install.ps1, uninstall.ps1     # per-user / per-machine 安装
+├── TypeRight.Core/
+│   ├── Signature/          # FormatSignature（提取/比较）SimilarSelector（匹配+高亮会话）BatchFormatter（批量应用+UndoRecord）
+│   ├── Formatting/         # FormulaConverter（§6 公式引擎，规格不变）SampleDocBuilder WordFormatUtils
+│   ├── Profiles/           # ProfileV2（Schema v2 + 校验 + 存储/导入导出）
+│   ├── Scanning/ Classification/  # v1 语义引擎（R1-R12）——PRD §13.1 封存为 P2 资产
+│   └── Settings.cs         # 三项设置 + 方案目录
+├── TypeRight.Addin/        # Ribbon 3 按钮 + ContextMenuText + FloatBar（浮动格式条）+ Toast + 方案/设置窗口
+└── TypeRight.SmokeTest/    # 真实 Word 黄金旅程（同类选择命中数/撤销粒度/公式计数/方案回放/幂等）
+tests/                      # 40 个纯逻辑单测（签名比较/宽松维度/方案校验/JSON 往返）
+tools/install.ps1           # 部署 %LOCALAPPDATA%\TypeRight\Addin + COM 注册
 ```
-
-## 关键设计
-
-- **单次撤销**：`Application.UndoRecord.StartCustomRecord("TypeRight 智能排版")` 包裹全部改动（含样式定义修改）；执行异常时 `EndCustomRecord + Document.Undo()` 整体回退（冒烟测试已验证样式定义一并回退）。
-- **幂等**：所有写入走 `SetIfChanged`（读-比-写）；公式区间跳过重转；同方案二次应用 0 改动（冒烟测试断言）。
-- **保留强调**：只写字体族/字号与段落级属性，区间内局部加粗/颜色不触碰；挂样式段落用 `wdUndefined` 赋值清直接字体格式（首次运行自探测，失败自动回落直写目标值）。
-- **字体分通道**：`eastAsiaFont → NameFarEast`，`latinFont → NameAscii + NameOther`，互不污染。
-- **公式转换**：数学区之外的文本子区间才做字体操作（数学区由转换器管理 Cambria Math），片段降序处理避免偏移漂移；失败片段原样保留并计数。
-- **角色识别**：R4 主标题用"正文聚类字号众数 +4pt"判定；R11 按（字号,加粗,颜色,对齐）签名聚类，占比最大簇为正文，大 1.5pt 以上的加粗簇按字号降序补位标题（每级限一簇）。
 
 ## 测试
 
 ```powershell
-dotnet test TypeRight.sln                      # 50 个纯逻辑单测
-dotnet run --project src\TypeRight.SmokeTest   # 真实 Word 端到端（识别/排版/撤销/幂等 23 项断言）
+dotnet test TypeRight.sln                      # 40 单测
+dotnet run --project src\TypeRight.SmokeTest   # 真实 Word 端到端（黄金旅程）
 ```
 
-冒烟测试输出样例文档 `src\TypeRight.SmokeTest\out\smoke-result.docx` 供人工检查。
+**性能**：冒烟测试经进程外 DCOM 运行（每 COM 调用 ~1ms 编组开销，~14ms/段）；插件实际运行在 Word 进程内（直调）。进程内实测看 `%LOCALAPPDATA%\TypeRight\addin-log.txt` 的「同类匹配: N 段 / Xms」日志行——PRD 验收口径以该日志为准。
 
-## 已知边界（P1 待办）
+## 已知边界（P1/P2）
 
-- 表格单元格内公式转换已启用，但公式字号取全局 `formula.sizePt`（与表格 9pt 文字不同号）
-- 选区模式、图注域（题注交叉引用）、公式编号（书签+交叉引用）为 P2
-- MML2OMML 兜底的 MathML 结构化生成器（矩阵/多级根号）待接入
-- LLM 增强默认关闭；开启后 key 仅发往用户配置的 BaseURL
+- 匹配高亮用临时黄色高亮呈现（原本有高亮的段落不参与标记以免无法精确还原）；高亮组包为独立撤销记录「TypeRight 匹配标记」
+- v1 语义识别引擎 / LLM / 预览面板：按 PRD §11 封存（代码保留在 Core/Scanning、Core/Classification）
+- CTP 停靠任务窗格：v2 无任务窗格需求（PRD 明确无），相关代码已随 v1 移除
+- MML2OMML.XSL 兜底管线已封装（`FormulaConverter.MathmlToOmml`），结构化 MathML 生成器属 P2

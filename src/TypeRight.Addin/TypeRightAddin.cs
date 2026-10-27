@@ -7,32 +7,14 @@ using TypeRight.Addin.Controllers;
 namespace TypeRight.Addin
 {
     /// <summary>
-    /// TypeRight COM Add-in（NetOffice，免 VSTO 运行时）。
-    /// 基类 NetOffice.WordApi.Tools.COMAddin 在 OnConnection 时自动把宿主包装为类型安全的
-    /// Word.Application（this.Application），事件参数里收到的已是包装对象，无需也不应再手工包装。
-    /// 注册：tools\install.ps1（管理员 RegAsm 或非管理员 HKCU 手工键）。
+    /// TypeRight COM Add-in（PRD v2：指认式批量排版）。
+    /// UI 只有：Ribbon 3 按钮 + 右键菜单 + 浮动格式条 + 轻提示。无任务窗格、无预览弹窗。
     /// </summary>
     [Guid("6C7C9713-51A1-4A55-8C0D-3A4E5F607182")]
     [ProgId("TypeRight.Connect")]
     [ComVisible(true)]
-    public sealed class TypeRightAddin : NetOffice.WordApi.Tools.COMAddin,
-        NetOffice.OfficeApi.Native.ICustomTaskPaneConsumer
+    public sealed class TypeRightAddin : NetOffice.WordApi.Tools.COMAddin
     {
-        // WordApi 基类未实现 ICustomTaskPaneConsumer（只有同名公有方法），补上显式接口实现，
-        // Word 才会在启动时把 CTP 工厂交给加载项 → NetOffice 基类逻辑负责创建任务窗格
-        void NetOffice.OfficeApi.Native.ICustomTaskPaneConsumer.CTPFactoryAvailable(object CTPFactoryInst)
-        {
-            Log("CTPFactoryAvailable（Word 提供任务窗格工厂）");
-            try
-            {
-                CTPFactoryAvailable(CTPFactoryInst); // 基类公有虚方法：创建 TaskPanes 定义的面板
-                Log("任务窗格创建流程完成");
-            }
-            catch (Exception ex)
-            {
-                Log("任务窗格创建失败（将回落浮动窗口）: " + ex.Message);
-            }
-        }
         private static readonly string LogFile = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TypeRight", "addin-log.txt");
 
@@ -50,27 +32,14 @@ namespace TypeRight.Addin
         }
 
         /// <summary>宿主 Word 应用（基类在 OnConnection 时已包装为类型安全实例）。</summary>
-        public NetOffice.WordApi.Application WordApplication
-        {
-            get { return Application; }
-        }
+        public NetOffice.WordApi.Application WordApplication { get { return Application; } }
 
-        public FormattingController Controller { get; private set; }
-
-        /// <summary>任务窗格集合（基类 protected，供控制器经此访问）。</summary>
-        internal NetOffice.OfficeApi.Tools.CustomTaskPaneCollection TaskPaneCollection
-        {
-            get { return TaskPanes; }
-        }
+        public TypeRightController Controller { get; private set; }
 
         public TypeRightAddin()
         {
             Log("ctor");
-            Controller = new FormattingController(this);
-
-            // 任务窗格定义需在 CTPFactoryAvailable 之前注册
-            var paneInfo = TaskPanes.Add(typeof(Panes.PreviewPaneHost), "智能排版");
-            paneInfo.Arguments = new object[] { this };
+            Controller = new TypeRightController(this);
 
             OnConnection += Addin_OnConnection;
             OnDisconnection += Addin_OnDisconnection;
@@ -78,8 +47,28 @@ namespace TypeRight.Addin
 
         private void Addin_OnConnection(object application, ext_ConnectMode connectMode, object addInInst, ref Array custom)
         {
-            // 事件参数 application 已是 NetOffice 包装对象；类型安全的实例用基类属性 this.Application
             Log("OnConnection mode=" + connectMode + " app=" + (Application != null ? "bound" : "null"));
+            try
+            {
+                // 点击文档其他处 → 关闭浮动条（PRD P0-2）
+                Application.WindowSelectionChangeEvent += Application_WindowSelectionChange;
+            }
+            catch (Exception ex)
+            {
+                Log("WindowSelectionChange 订阅失败: " + ex.Message);
+            }
+        }
+
+        private void Application_WindowSelectionChange(NetOffice.WordApi.Selection selection)
+        {
+            try
+            {
+                Controller.HandleSelectionChange(selection);
+            }
+            catch (Exception ex)
+            {
+                Log("HandleSelectionChange: " + ex.Message);
+            }
         }
 
         private void Addin_OnDisconnection(ext_DisconnectMode removeMode, ref Array custom)
@@ -107,7 +96,7 @@ namespace TypeRight.Addin
             }
             catch (Exception ex)
             {
-                System.Windows.Forms.MessageBox.Show("TypeRight：加载功能区失败 - " + ex.Message);
+                Log("加载功能区失败: " + ex.Message);
                 return null;
             }
         }
@@ -116,28 +105,26 @@ namespace TypeRight.Addin
 
         public void OnRibbonLoad(NetOffice.OfficeApi.IRibbonUI ribbonUi)
         {
-            // 预留：按需 invalidate
         }
 
-        public void OnFormatAll(NetOffice.OfficeApi.IRibbonControl control)
+        public void OnSimilar(NetOffice.OfficeApi.IRibbonControl control)
         {
-            Controller.Run(false);
+            Controller.SimilarSelect();
         }
 
-        public void OnFormatSelection(NetOffice.OfficeApi.IRibbonControl control)
+        public void OnFormulas(NetOffice.OfficeApi.IRibbonControl control)
         {
-            Controller.Run(true);
+            Controller.ConvertFormulas();
         }
 
         public void OnProfiles(NetOffice.OfficeApi.IRibbonControl control)
         {
-            Controller.OpenProfileEditor();
+            Controller.OpenProfiles();
         }
 
         public void OnSettings(NetOffice.OfficeApi.IRibbonControl control)
         {
             Controller.OpenSettings();
         }
-
-}
+    }
 }

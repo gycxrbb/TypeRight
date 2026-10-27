@@ -5,26 +5,38 @@ using System.Xml.Xsl;
 using NetOffice.WordApi;
 using NetOffice.WordApi.Enums;
 using TypeRight.Formulas;
-using TypeRight.Profiles;
 using TypeRight.Scanning;
 
 namespace TypeRight.Formatting
 {
+    /// <summary>公式转换统计（PRD v2 §6.4：已转换 N 处，失败 M 处 + 失败定位）。</summary>
+    public sealed class FormulaStats
+    {
+        public int Converted;
+        public int Failed;
+        public readonly List<string> FailedLocations = new List<string>();
+
+        public string SummaryText()
+        {
+            return "已转换 " + Converted + " 处，失败 " + Failed + " 处" + (Failed > 0 ? "（失败片段已原样保留）" : "");
+        }
+    }
+
     /// <summary>
-    /// 纯文本公式 → OMath（PRD §6）：片段切分 → UnicodeMath 线性串 → OMaths.Add → BuildUp。
-    /// 失败片段原样保留为文本并计入统计，绝不留半转换残骸。
+    /// 纯文本公式 → OMath（PRD v2 §6，规格不变）：切分 → UnicodeMath 线性串 → OMaths.Add → BuildUp。
+    /// 失败片段原样保留并计入统计，绝不留半转换残骸。
     /// </summary>
     public sealed class FormulaConverter
     {
         private readonly Document _doc;
-        private readonly FormulaOptions _options;
+        private readonly double? _mathSizePt;
         private readonly string _mml2OmmlPath;
 
-        public FormulaConverter(Document doc, FormulaOptions options, string mml2OmmlXslPath)
+        public FormulaConverter(Document doc, double? mathSizePt = null, string mml2OmmlXslPath = null)
         {
             if (doc == null) throw new ArgumentNullException("doc");
             _doc = doc;
-            _options = options ?? new FormulaOptions();
+            _mathSizePt = mathSizePt;
             _mml2OmmlPath = mml2OmmlXslPath;
         }
 
@@ -51,24 +63,42 @@ namespace TypeRight.Formatting
             return null;
         }
 
-        /// <summary>
-        /// 转换一个段落内的公式片段。wholeLine=true 时（formulaLine 角色）转换整段。
-        /// 已是公式对象的区间（OMaths）自动跳过，保证幂等。
-        /// </summary>
-        public void ConvertParagraph(ParagraphFeatures feature, Paragraph paragraph, ApplyStats stats, bool wholeLine)
+        /// <summary>转换整个文档（正文段落 + 表格单元格；已是公式对象的区间自动跳过，保证幂等）。</summary>
+        public FormulaStats ConvertDocument()
         {
-            if (feature == null || paragraph == null || stats == null) return;
-            if (feature.IsEmpty || feature.HasFields) return;
+            var stats = new FormulaStats();
+            Paragraphs paragraphs = _doc.Paragraphs;
+            int count = paragraphs.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                Paragraph p = null;
+                try { p = paragraphs[i]; }
+                catch { continue; }
+                if (p == null) continue;
+                ConvertParagraph(p, stats);
+            }
+            return stats;
+        }
+
+        /// <summary>转换单个段落内的公式片段。wholeLine=true 时转换整段（独立公式行场景）。</summary>
+        public void ConvertParagraph(Paragraph paragraph, FormulaStats stats, bool wholeLine = false)
+        {
+            if (paragraph == null || stats == null) return;
 
             Range baseRange = paragraph.Range;
             string liveText;
             try { liveText = baseRange.Text ?? ""; }
             catch { return; }
 
+            // 含域（目录/交叉引用等）的段落跳过，避免误伤
+            try { if (baseRange.Fields.Count > 0) return; } catch { }
+
+            string trimmed = liveText.TrimEnd('\r', '\a', '\v');
+            if (trimmed.Trim().Length == 0) return;
+
             List<MathSegmenter.Segment> segments;
             if (wholeLine)
             {
-                string trimmed = liveText.TrimEnd('\r', '\a', '\v');
                 int lead = liveText.Length - liveText.TrimStart(' ').Length;
                 if (MathSegmenter.IsFormulaCandidate(trimmed.Trim()))
                     segments = new List<MathSegmenter.Segment>
@@ -80,7 +110,7 @@ namespace TypeRight.Formatting
             }
             else
             {
-                segments = MathSegmenter.FindSegments(liveText.TrimEnd('\r', '\a', '\v'));
+                segments = MathSegmenter.FindSegments(trimmed);
             }
             if (segments.Count == 0) return;
 
@@ -88,7 +118,7 @@ namespace TypeRight.Formatting
             for (int i = segments.Count - 1; i >= 0; i--)
             {
                 var seg = segments[i];
-                Range rng = null;
+                Range rng;
                 try
                 {
                     rng = baseRange.Duplicate;
@@ -97,16 +127,29 @@ namespace TypeRight.Formatting
                 }
                 catch { continue; }
 
-                // 已是公式区间则跳过（幂等）
                 try { if (rng.OMaths.Count > 0) continue; } catch { }
 
                 string original = seg.Text;
-                if (TryConvertRange(rng, original, stats)) stats.FormulasConverted++;
+                if (TryConvertRange(rng, original))
+                    stats.Converted++;
+                else
+                {
+                    stats.Failed++;
+                    if (stats.FailedLocations.Count < 50)
+                        stats.FailedLocations.Add("¶" + ParagraphIndex(paragraph) + "  " + (original.Length > 30 ? original.Substring(0, 30) + "…" : original));
+                }
             }
         }
 
+        private static int ParagraphIndex(Paragraph p)
+        {
+            // 段落序号用于失败定位（基于文档段落集合，代价可接受）
+            try { return p.Range.Paragraphs[1].Range.Start; }
+            catch { return -1; }
+        }
+
         /// <summary>单个片段的转换。失败时尽力还原原文并返回 false。</summary>
-        private bool TryConvertRange(Range rng, string originalText, ApplyStats stats)
+        private bool TryConvertRange(Range rng, string originalText)
         {
             string mapped = UnicodeMathMapper.Map(originalText);
             int mathCountBefore = 0;
@@ -117,28 +160,25 @@ namespace TypeRight.Formatting
                 if (!string.Equals(mapped, originalText, StringComparison.Ordinal))
                     rng.Text = mapped;
 
-                // NetOffice：OMaths.Add(range) 返回覆盖新建公式对象的 Range
                 Range mathRange = _doc.OMaths.Add(rng);
                 if (mathRange == null) throw new InvalidOperationException("OMaths.Add 返回空。");
                 OMath om = mathRange.OMaths[1];
                 if (om == null) throw new InvalidOperationException("未取到公式对象。");
                 om.BuildUp();
 
-                // 成功性验证：区间已进入公式集合
                 int mathCountAfter;
                 try { mathCountAfter = rng.OMaths.Count; } catch { mathCountAfter = 1; }
                 if (mathCountAfter <= mathCountBefore) throw new InvalidOperationException("公式对象未建立。");
 
-                if (_options.SizePt.HasValue)
+                if (_mathSizePt.HasValue)
                 {
-                    try { om.Range.Font.Size = (float)_options.SizePt.Value; } catch { }
+                    try { om.Range.Font.Size = (float)_mathSizePt.Value; } catch { }
                 }
                 return true;
             }
             catch
             {
                 Restore(rng, originalText, mathCountBefore);
-                stats.FormulasFailed++;
                 return false;
             }
         }
@@ -158,15 +198,14 @@ namespace TypeRight.Formatting
             }
             catch
             {
-                // 还原失败是极端情况（不应发生）：至少不让异常冒泡打断整体排版
+                // 还原失败是极端情况：不让异常冒泡打断整体转换
             }
         }
 
-        // ---- MML2OMML.XSL 兜底管线（PRD §6.2.1）----
+        // ---- MML2OMML.XSL 兜底管线（PRD §6.2.1，P2 结构化生成器接入点）----
         private static XslCompiledTransform _mmlTransform;
         private static string _mmlTransformPath;
 
-        /// <summary>MathML → OMML（Office 官方 XSLT）。加载失败抛异常，由调用方决定是否走该兜底。</summary>
         public static string MathmlToOmml(string mathml, string xslPath)
         {
             if (string.IsNullOrEmpty(xslPath) || !File.Exists(xslPath))
@@ -178,18 +217,17 @@ namespace TypeRight.Formatting
                 _mmlTransform = transform;
                 _mmlTransformPath = xslPath;
             }
-            using (var reader = new System.IO.StringReader(mathml))
-            using (var writer = new System.IO.StringWriter())
+            using (var reader = new StringReader(mathml))
+            using (var writer = new StringWriter())
             {
                 using (var xmlReader = System.Xml.XmlReader.Create(reader))
                 {
-                    _mmlTransform.Transform(xmlReader, new System.Xml.Xsl.XsltArgumentList(), writer);
+                    _mmlTransform.Transform(xmlReader, new XsltArgumentList(), writer);
                 }
                 return writer.ToString();
             }
         }
 
-        /// <summary>把线性文本包装为 mtext 的 MathML（兜底管线的降级输入：至少成为 Cambria Math 公式对象）。</summary>
         public static string WrapLinearAsMtextMathml(string linearText)
         {
             string escaped = (linearText ?? "")
