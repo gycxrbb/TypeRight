@@ -62,6 +62,23 @@ namespace TypeRight.Acceptance
                 }
 
                 Console.WriteLine();
+                Console.WriteLine("══ 正文严格命中 27 段清单（完整签名）══");
+                {
+                    var bodyP2 = env.FindParagraph(doc, "解一元二次方程的灵魂是");
+                    int n = 0;
+                    foreach (Paragraph p2 in SimilarSelector.Match(doc, bodyP2, FormatSignature.IgnoreDims.None).Paragraphs)
+                    {
+                        n++;
+                        string t2 = (p2.Range.Text ?? "").TrimEnd((char)13, (char)7, (char)11);
+                        var s3 = FormatSignatureReader.Read(p2);
+                        Console.WriteLine("  [" + n + "] " + t2.Substring(0, Math.Min(14, t2.Length)) +
+                            "  东=" + (s3.EastAsiaFont ?? "?") + " 西=" + (s3.LatinFont ?? "?") +
+                            " 号=" + s3.SizePt.ToString("0.#") + " 粗raw=" + s3.BoldRaw + " 斜raw=" + s3.ItalicRaw +
+                            " 色=" + s3.ColorRgb.ToString("X6") + " 齐=" + s3.Alignment);
+                    }
+                }
+
+                Console.WriteLine();
                 Console.WriteLine("══ 斜体真值诊断 ══");
                 var bodyP = env.FindParagraph(doc, "解一元二次方程的灵魂是");
                 var bodySig2 = FormatSignatureReader.Read(bodyP);

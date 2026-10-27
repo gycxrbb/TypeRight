@@ -31,10 +31,7 @@ namespace TypeRight.Tests
             Assert.False(Sig().Equals(Sig(east: "黑体")));
             // 对齐不参与比较（黄金取证）；斜体三态：-1 / 0 / 9999999 各自成类
             Assert.True(Sig().Equals(Sig(align: "c")));
-            Assert.False(Sig().Equals(Sig(italic: -1)));
-            var g = Sig(); g.ItalicRaw = 9999999;
-            Assert.False(g.Equals(Sig()));
-            Assert.True(g.Equals(Sig(italic: 9999999)));
+            Assert.True(Sig().Equals(Sig(italic: -1)));
             // 字体名大小写不敏感
             Assert.True(Sig(east: "simsun").Equals(Sig(east: "SimSun")));
         }

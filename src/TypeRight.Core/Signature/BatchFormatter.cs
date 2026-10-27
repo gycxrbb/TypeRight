@@ -151,20 +151,22 @@ namespace TypeRight.Signature
                     catch { }
                 }
 
-                // 幂等计数：前后有效值对比（区间含混合值时读数恒定，不会误报）
+                // 幂等计数：before 为已知一致值且 after 不同才计改动；
+                // before 读数混合（含段落/单元格标记）→ 归一写不算改动（幂等口径）
                 string afterFE = SafeFontName(f.NameFarEast);
                 string afterAscii = SafeFontName(f.NameAscii);
                 float afterSize2 = SafeSize(f.Size);
-                if (!string.Equals(beforeFE, afterFE, StringComparison.OrdinalIgnoreCase)) changed = true;
-                else if (!string.Equals(beforeAscii, afterAscii, StringComparison.OrdinalIgnoreCase)) changed = true;
-                else if (Math.Abs(beforeSize - afterSize2) > 0.05f) changed = true;
+                if (beforeFE != null && !string.Equals(beforeFE, afterFE, StringComparison.OrdinalIgnoreCase)) changed = true;
+                else if (beforeAscii != null && !string.Equals(beforeAscii, afterAscii, StringComparison.OrdinalIgnoreCase)) changed = true;
+                else if (beforeSize > 0 && Math.Abs(beforeSize - afterSize2) > 0.05f) changed = true;
             }
             return changed;
         }
 
         private static string SafeFontName(string name)
         {
-            return string.IsNullOrWhiteSpace(name) ? "\u0000mixed" : name;
+            // null = Word 对混合区间的读数（不计入幂等改动）
+            return string.IsNullOrWhiteSpace(name) ? null : name;
         }
 
         private static float SafeSize(float size)

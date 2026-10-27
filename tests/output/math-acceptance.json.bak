@@ -15,6 +15,7 @@
         "ignore": [
           "sizePt"
         ],
+        "inTable": false,
         "IgnoreValue": 1
       },
       "apply": {
@@ -33,6 +34,7 @@
         "sizePt": 12.5,
         "bold": true,
         "color": "#2B6CB0",
+        "inTable": false,
         "IgnoreValue": 0
       },
       "apply": {
@@ -55,6 +57,7 @@
           "color",
           "bold"
         ],
+        "inTable": false,
         "IgnoreValue": 6
       },
       "apply": {
@@ -77,7 +80,25 @@
           "sizePt",
           "color"
         ],
+        "inTable": false,
         "IgnoreValue": 3
+      },
+      "apply": {
+        "eastAsiaFont": "宋体",
+        "latinFont": "Times New Roman",
+        "sizePt": null,
+        "bold": null,
+        "color": null
+      }
+    },
+    {
+      "order": 5,
+      "match": {
+        "eastAsiaFont": null,
+        "latinFont": null,
+        "color": null,
+        "catchAll": true,
+        "IgnoreValue": 0
       },
       "apply": {
         "eastAsiaFont": "宋体",

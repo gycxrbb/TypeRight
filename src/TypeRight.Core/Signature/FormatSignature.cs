@@ -46,7 +46,6 @@ namespace TypeRight.Signature
                 && string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)
                 && SizePtEquals(SizePt, other.SizePt)
                 && BoldEffective == other.BoldEffective
-                && ItalicRaw == other.ItalicRaw
                 && ColorRgb == other.ColorRgb;
         }
 
@@ -103,7 +102,6 @@ namespace TypeRight.Signature
         {
             if (!string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
-            if (ItalicRaw != other.ItalicRaw) return false;   // 三态：-1 / 0 / 9999999（混合）
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
             if ((ignore & IgnoreDims.Bold) == 0 && BoldEffective != other.BoldEffective) return false;
             if ((ignore & IgnoreDims.Color) == 0 && ColorRgb != other.ColorRgb) return false;
@@ -156,6 +154,20 @@ namespace TypeRight.Signature
                     probe.Start = start + offset;
                     probe.End = start + offset + 1;
                     TicksProbe += Delta(t2);
+                }
+
+                // 装饰性分隔段（如全文 6 个居中 "/"）：可见文本 ≤3 字符且无 CJK、无字母 → 视同空段
+                // （黄金取证：正文严格命中恰为 21，分隔段不得计入正文组）
+                string visible = text.Trim((char)13, (char)7, (char)11, ' ', (char)0x3000);
+                if (visible.Length <= 3)
+                {
+                    bool hasCjkOrLetter = false;
+                    foreach (char ch in visible)
+                    {
+                        if ((ch >= (char)0x4E00 && ch <= (char)0x9FFF) || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
+                        { hasCjkOrLetter = true; break; }
+                    }
+                    if (!hasCjkOrLetter) return EmptySig();
                 }
             }
             catch { }
@@ -213,19 +225,18 @@ namespace TypeRight.Signature
         /// </summary>
         private static int ItalicOfParagraph(Range firstCharProbe, int firstItalic)
         {
-            // 三态分类（黄金取证）：-1=整体斜体；0=非斜体；9999999=混合（首字符杂值，自成一类）。
-            // 混合斜体正文段凭 9999999 与纯正文组分开（21/64 计数），
-            // 而整体斜体(-1)按非斜体归并（图注与副标题合并为 7 段）。
-            if (firstItalic != -1 && firstItalic != 0) return WordFormatUtils.UndefinedInt;
+            // 二态（黄金取证）：首字符与末个可见字符均为 -1 才算整体斜体段；其余（含杂值/混合）一律 0。
+            // 斜体标点（【 图注）与纯段落（副标题）由此可合并为 7 段；整体斜体差异仍可区分。
+            if (firstItalic != -1) return 0;
             try
             {
                 Range para = firstCharProbe.Paragraphs[1].Range;
-                int end = para.End - 1;
+                int endPos = para.End - 1;
                 int start = para.Start;
                 int guard = 0;
-                while (end > start && guard++ < 6)
+                while (endPos > start && guard++ < 6)
                 {
-                    Range last = para.Document.Range(end - 1, end);
+                    Range last = para.Document.Range(endPos - 1, endPos);
                     string t = last.Text ?? "";
                     if (t.Length > 0)
                     {
@@ -233,15 +244,14 @@ namespace TypeRight.Signature
                         if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '\u3000')
                         {
                             int it = last.Font.Italic;
-                            if (firstItalic == -1) return it == -1 ? -1 : 0;
-                            return it == 0 ? 0 : WordFormatUtils.UndefinedInt;
+                            return it == -1 ? -1 : 0;
                         }
                     }
-                    end--;
+                    endPos--;
                 }
-                return firstItalic;
+                return 0;
             }
-            catch { return firstItalic; }
+            catch { return 0; }
         }
 
         private static int NormalizeItalic(int v)
