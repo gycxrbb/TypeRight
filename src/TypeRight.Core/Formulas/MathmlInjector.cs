@@ -33,11 +33,18 @@ namespace TypeRight.Formulas
                 tempFile = Path.Combine(Path.GetTempPath(), "typeright-math-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".docx");
                 File.WriteAllBytes(tempFile, BuildMinimalDocx(mathElement));
 
-                // 3) 删除线性文本 → InsertFile 注入公式（插入的是完整段落，见步骤 4 合并）
-                target.Delete();
-                var at = target.Duplicate;
-                at.Collapse(NetOffice.WordApi.Enums.WdCollapseDirection.wdCollapseStart);
-                at.InsertFile(tempFile);
+                // 3) 内联注入：临时文档承载公式 → FormattedText 赋值到目标区间（不引入段落边界）
+                NetOffice.WordApi.Document scratch = null;
+                try
+                {
+                    scratch = doc.Application.Documents.Open(tempFile);
+                    Range src = scratch.Range(0, scratch.Content.End - 1);
+                    target.FormattedText = src.FormattedText;
+                }
+                finally
+                {
+                    try { if (scratch != null) { scratch.Close(false); } } catch { }
+                }
 
                 // 4) 成功判据 + 合并段落拆分
                 try
@@ -50,7 +57,7 @@ namespace TypeRight.Formulas
                         if (probe.OMaths.Count == 0) return false;
                     }
 
-                    MergeSplitParagraphs(doc, target, segStart, segLen, paraLen);
+                    // FormattedText 不拆段，无需合并
                     return true;
                 }
                 catch { return false; }

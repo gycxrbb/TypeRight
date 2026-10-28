@@ -86,15 +86,17 @@ namespace TypeRight.Formatting
             // 纯文本区间（数学区外 gap）精确定位：gap 是纯文本，字符串偏移 = 文档位置，零漂移。
             // 每轮：取段落的所有 gap → 在 gap 文本内找片段 → 转该 gap 的最后一个片段 → 重扫。
             // 数学区线性文本天然在 gap 之外，永不重复转换；拆分残留段的尾部文本在 gap 内，天然被覆盖。
-            int guard = 0;
-            bool converted = true;
-            while (converted && guard++ < 600)
+            // 单遍逐段：每段取纯文本 gap，gap 内片段降序转换（每转一个重读该 gap 保位置精确）。
+            // FormattedText 注入不拆段 → 无残留、无重复，无需外层重扫与空段清理。
+            foreach (Paragraph p in _doc.Paragraphs)
             {
-                converted = false;
-                foreach (Paragraph p in _doc.Paragraphs)
+                try
                 {
-                    try
+                    bool convertedHere = true;
+                    int localGuard = 0;
+                    while (convertedHere && localGuard++ < 30)
                     {
+                        convertedHere = false;
                         foreach (Range gap in TextGapsExcludingMath(p))
                         {
                             string gapText;
@@ -106,43 +108,36 @@ namespace TypeRight.Formatting
                             var segs = MathSegmenter.FindSegments(trimmed);
                             if (segs.Count == 0) continue;
 
-                            // 该 gap 的最后一个片段（降序：先转后面的不影响前面）
-                            var seg = segs[segs.Count - 1];
-                            Range rng;
-                            try
+                            // gap 内最后一个片段（前面片段位置不受影响；若它失败则转倒数第二个，以此类推）
+                            for (int si = segs.Count - 1; si >= 0; si--)
                             {
-                                rng = gap.Duplicate;
-                                rng.Start = gap.Start + seg.Start;
-                                rng.End = rng.Start + seg.Length;
+                                var seg = segs[si];
+                                try
+                                {
+                                    Range rng = gap.Duplicate;
+                                    rng.Start = gap.Start + seg.Start;
+                                    rng.End = rng.Start + seg.Length;
+                                    if (TryConvertRange(rng, seg.Text, false, seg.Start, seg.Length, trimmed.Length))
+                                    {
+                                        stats.Converted++;
+                                        convertedHere = true;
+                                        break;
+                                    }
+                                    stats.Failed++;
+                                    if (stats.FailedLocations.Count < 50)
+                                        stats.FailedLocations.Add("¶" + ParagraphIndex(p) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
+                                }
+                                catch { }
                             }
-                            catch { continue; }
-
-                            int segStartRel = seg.Start, segLen = seg.Length, paraLen = trimmed.Length;
-                            if (TryConvertRange(rng, seg.Text, false, segStartRel, segLen, paraLen))
-                            {
-                                stats.Converted++;
-                                converted = true;
-                            }
-                            else
-                            {
-                                stats.Failed++;
-                                if (stats.FailedLocations.Count < 50)
-                                    stats.FailedLocations.Add("¶" + ParagraphIndex(p) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
-                                // 失败片段保留原文（安全语义）：跳过它继续转更早的片段
-                                ConvertEarlierSegments(gap, segs, seg, p, stats);
-                            }
-                            break;   // 本段已转一个，重扫外层
+                            if (convertedHere) break;
                         }
-                        if (converted) break;   // 重扫全部段落
                     }
-                    catch { }
                 }
+                catch { }
             }
-
-            // InsertFile 拆段合并的漏网空段清理
-            RemoveEmptySideEffectParagraphs();
             return stats;
         }
+
 
         /// <summary>失败片段之后：把该 gap 内更早的片段按降序继续转换（失败片段保留）。</summary>
         private void ConvertEarlierSegments(Range gap, List<MathSegmenter.Segment> segs, MathSegmenter.Segment failed,
