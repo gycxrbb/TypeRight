@@ -210,6 +210,19 @@ namespace TypeRight.Formulas
                 char c = Cur;
                 if (c == '\0') return null;
 
+                if (c == '|')
+                {
+                    // 绝对值/行列式定界组：|E| → mo(|) E mo(|)（stretchy=false）
+                    _i++;
+                    var inner = ParseRow('|');
+                    Eat('|');
+                    var g = new Row();
+                    g.Items.Add(Fence('|'));
+                    g.Items.Add(inner);
+                    g.Items.Add(Fence('|'));
+                    return g;
+                }
+
                 if (c == '(' || c == '[' || c == '{')
                 {
                     char open = c;
@@ -287,7 +300,7 @@ namespace TypeRight.Formulas
                     case '≠': case '≈': case '≤': case '≥': case '<': case '>':
                     case '·': case '∝': case '∈': case '∉': case '∋':
                     case '⟺': case '⇔': case '⟹': case '⇒': case '↔': case '→': case '←':
-                    case '∵': case '∴': case ',': case '|': case '∥': case '⊥':
+                    case '∵': case '∴': case ',': case '∥': case '⊥':
                         return true;
                     default:
                         return false;

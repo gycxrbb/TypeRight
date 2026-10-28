@@ -97,67 +97,66 @@ namespace TypeRight.Formatting
             return stats;
         }
 
-        /// <summary>转换单个段落内的公式片段。wholeLine=true 时转换整段（独立公式行场景）。</summary>
+        /// <summary>转换单个段落内的公式片段。wholeLine=true 时转换整段（独立公式行场景）。
+        /// 逐段重扫循环：每次迭代重读段落文本、重算区间，从根上规避粘贴/撤销造成的区间指针漂移。</summary>
         public void ConvertParagraph(Paragraph paragraph, FormulaStats stats, bool wholeLine = false, bool secondPass = false)
         {
             if (paragraph == null || stats == null) return;
 
-            Range baseRange = paragraph.Range;
-            string liveText;
-            try { liveText = baseRange.Text ?? ""; }
-            catch { return; }
-
             // 含域（目录/交叉引用等）的段落跳过，避免误伤
-            try { if (baseRange.Fields.Count > 0) return; } catch { }
-
-            string trimmed = liveText.TrimEnd('\r', '\a', '\v');
-            if (trimmed.Trim().Length == 0) return;
+            try { if (paragraph.Range.Fields.Count > 0) return; } catch { }
 
             bool inTable = false;
             try { inTable = Convert.ToBoolean(paragraph.Range.get_Information(WdInformation.wdWithInTable)); }
             catch { }
 
-            List<MathSegmenter.Segment> segments;
-            if (wholeLine)
+            int guard = 0;
+            while (guard++ < 24)
             {
-                int lead = liveText.Length - liveText.TrimStart(' ').Length;
-                if (MathSegmenter.IsFormulaCandidate(trimmed.Trim()))
-                    segments = new List<MathSegmenter.Segment>
-                    {
-                        new MathSegmenter.Segment { Start = lead, Length = trimmed.Trim().Length, Text = trimmed.Trim() }
-                    };
-                else
-                    segments = MathSegmenter.FindSegments(trimmed);
-            }
-            else
-            {
-                segments = MathSegmenter.FindSegments(trimmed);
-            }
-            if (segments.Count == 0) return;
+                Range baseRange = paragraph.Range;
+                string liveText;
+                try { liveText = baseRange.Text ?? ""; }
+                catch { return; }
+                string trimmed = liveText.TrimEnd('\r', '\a', '\v');
+                if (trimmed.Trim().Length == 0) break;
 
-            // 降序处理，先改后面的片段不影响前面的偏移
-            for (int i = segments.Count - 1; i >= 0; i--)
-            {
-                var seg = segments[i];
-                Range rng;
-                try
+                List<MathSegmenter.Segment> segments = FindParagraphSegments(liveText, trimmed, wholeLine);
+                if (segments.Count == 0) break;
+
+                // 找第一个“还不是公式区”的片段
+                Range target = null;
+                string original = null;
+                int segStart = -1, segLen = 0;
+                foreach (var seg in segments)
                 {
-                    rng = baseRange.Duplicate;
-                    rng.Start = baseRange.Start + seg.Start;
-                    rng.End = rng.Start + seg.Length;
+                    Range rng;
+                    try
+                    {
+                        rng = baseRange.Duplicate;
+                        rng.Start = baseRange.Start + seg.Start;
+                        rng.End = rng.Start + seg.Length;
+                    }
+                    catch { continue; }
+                    int inMath;
+                    try { inMath = rng.OMaths.Count; } catch { inMath = 0; }
+                    if (inMath > 0) continue;   // 已是公式（含合并），跳过
+                    target = rng;
+                    original = seg.Text;
+                    segStart = seg.Start;
+                    segLen = seg.Length;
+                    break;
                 }
-                catch { continue; }
+                if (target == null) break;   // 全部已转或不可定位
 
-                try { if (rng.OMaths.Count > 0) continue; } catch { }
-
-                string original = seg.Text;
-                if (TryConvertRange(rng, original))
+                if (TryConvertRange(target, original, secondPass, segStart, segLen, trimmed.Length))
                     stats.Converted++;
                 else
                 {
                     stats.Failed++;
                     if (stats.FailedLocations.Count < 50)
                         stats.FailedLocations.Add("¶" + ParagraphIndex(paragraph) + "  " + (original.Length > 30 ? original.Substring(0, 30) + "…" : original));
+                    // 该片段转换失败：避免死循环，终止本段（失败片段保留原文，符合安全语义）
+                    break;
                 }
             }
 
@@ -165,6 +164,20 @@ namespace TypeRight.Formatting
             // （运行时有效值不变，仅 document.xml 缺标签）。对表格段非公式 run 强制显式回写，
             // 恢复 w:sz/w:b/w:color/w:rFonts 显式序列化。
             if (inTable) ForceExplicitRunProps(paragraph);
+        }
+
+        private static List<MathSegmenter.Segment> FindParagraphSegments(string liveText, string trimmed, bool wholeLine)
+        {
+            if (wholeLine)
+            {
+                int lead = liveText.Length - liveText.TrimStart(' ').Length;
+                if (MathSegmenter.IsFormulaCandidate(trimmed.Trim()))
+                    return new List<MathSegmenter.Segment>
+                    {
+                        new MathSegmenter.Segment { Start = lead, Length = trimmed.Trim().Length, Text = trimmed.Trim() }
+                    };
+            }
+            return MathSegmenter.FindSegments(trimmed);
         }
 
         /// <summary>二遍清扫：区间指针漂移（粘贴/撤销副作用）可能残留未转的纯文本片段，补转。</summary>
@@ -268,7 +281,7 @@ namespace TypeRight.Formatting
         }
 
         /// <summary>单个片段的转换。失败时尽力还原原文并返回 false。</summary>
-        private bool TryConvertRange(Range rng, string originalText)
+        private bool TryConvertRange(Range rng, string originalText, bool secondPass = false, int segStart = -1, int segLen = 0, int paraLen = -1)
         {
             // 边缘悬挂括号剥离：尾部悬 ( [（后随中文说明被切开的场景）与头部悬 ) 剥掉再判平衡；
             // 剥离后仍不平衡（如 y = a(x - h）才判失败保留原文（TC-11）
@@ -286,13 +299,17 @@ namespace TypeRight.Formatting
             try
             {
                 // TC-19 管线（PRD §6.2.1）：MathML → 剪贴板 → 粘贴注入（嵌套结构完整）
-                string mml = null;
-                try { mml = MathMLBuilder.Build(mapped); }
-                catch (Exception bex) { RecordFallback("BUILD:" + mapped + " @" + bex.Message); }
-                if (mml != null)
+                // 二遍清扫不用剪贴板（漂移场景复发），直接走确定性 Functions/BuildUp 路径
+                if (!secondPass && !string.IsNullOrEmpty(_mml2OmmlPath))
                 {
-                    if (MathmlInjector.TryInject(_doc.Application, _doc, rng, mml)) return true;
-                    RecordFallback("INJECT:" + mapped);
+                    string mml = null;
+                    try { mml = MathMLBuilder.Build(mapped); }
+                    catch (Exception bex) { RecordFallback("BUILD:" + mapped + " @" + bex.Message); }
+                    if (mml != null)
+                    {
+                        if (MathmlInjector.TryInject(_doc, rng, mml, _mml2OmmlPath, segStart, segLen, paraLen)) return true;
+                        RecordFallback("INJECT:" + mapped);
+                    }
                 }
 
                 if (StructuredMath.NeedsStructure(mapped))

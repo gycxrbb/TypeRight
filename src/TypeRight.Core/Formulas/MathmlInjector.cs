@@ -1,40 +1,59 @@
 using System;
-using System.Diagnostics;
+using System.IO;
+using System.IO.Compression;
+using System.Text;
 using NetOffice.WordApi;
 
 namespace TypeRight.Formulas
 {
     /// <summary>
-    /// MathML → Word 公式注入（TC-19 管线）：MathML 文本放剪贴板 UnicodeText →
-    /// 选中原片段 → Selection.Paste，Word 自动将 MathML 转为 OMML（探针 P4 实证）。
+    /// MathML → OMML → 临时 docx → Range.InsertFile 注入（TC-19 管线，PRD §6.2.1）。
+    /// 不占用剪贴板（全局用户资源，禁止污染——剪贴板方案已废弃）。
     /// </summary>
     public static class MathmlInjector
     {
-        /// <summary>注入成功返回 true；任何失败返回 false（调用方回落 Functions 路径）。</summary>
-        public static bool TryInject(Application app, Document doc, Range target, string mathml)
+        /// <summary>注入成功返回 true；任何失败返回 false（调用方回落 Functions 路径）。
+        /// segStart/segLen/paraLen 用于判断片段在段中位置，InsertFile 插入完整段落后按需合并拆分。</summary>
+        public static bool TryInject(Document doc, Range target, string mathml, string xslPath,
+            int segStart = -1, int segLen = 0, int paraLen = -1)
         {
-            if (app == null || doc == null || target == null || string.IsNullOrEmpty(mathml)) return false;
+            if (doc == null || target == null || string.IsNullOrEmpty(mathml)) return false;
+            if (string.IsNullOrEmpty(xslPath) || !File.Exists(xslPath)) return false;
 
-            int zonesBefore = 0;
-            try { zonesBefore = doc.OMaths.Count; } catch { }
-
-            string prevClip = null;
-            bool clipRestorable = false;
+            string tempFile = null;
             try
             {
+                // 1) MathML → OMML（Office 自带 XSL）
+                string omml = XslMathmlToOmml(mathml, xslPath);
+                int i = omml.IndexOf("<m:oMath", StringComparison.Ordinal);
+                if (i < 0) return false;
+                string mathElement = omml.Substring(i).Trim();
+
+                // 2) OMML → 最小 docx
+                tempFile = Path.Combine(Path.GetTempPath(), "typeright-math-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".docx");
+                File.WriteAllBytes(tempFile, BuildMinimalDocx(mathElement));
+
+                // 3) 删除线性文本 → InsertFile 注入公式（插入的是完整段落，见步骤 4 合并）
+                target.Delete();
+                var at = target.Duplicate;
+                at.Collapse(NetOffice.WordApi.Enums.WdCollapseDirection.wdCollapseStart);
+                at.InsertFile(tempFile);
+
+                // 4) 成功判据 + 合并段落拆分
                 try
                 {
-                    if (System.Windows.Forms.Clipboard.ContainsText())
+                    if (target.OMaths.Count == 0)
                     {
-                        prevClip = System.Windows.Forms.Clipboard.GetText();
-                        clipRestorable = true;
+                        var probe = target.Duplicate;
+                        probe.Collapse(NetOffice.WordApi.Enums.WdCollapseDirection.wdCollapseEnd);
+                        probe.MoveEnd(NetOffice.WordApi.Enums.WdUnits.wdCharacter, 1);
+                        if (probe.OMaths.Count == 0) return false;
                     }
-                }
-                catch { }
 
-                System.Windows.Forms.Clipboard.SetText(mathml, System.Windows.Forms.TextDataFormat.UnicodeText);
-                target.Select();
-                app.Selection.Paste();
+                    MergeSplitParagraphs(doc, target, segStart, segLen, paraLen);
+                    return true;
+                }
+                catch { return false; }
             }
             catch
             {
@@ -42,40 +61,121 @@ namespace TypeRight.Formulas
             }
             finally
             {
-                if (clipRestorable)
-                {
-                    try { System.Windows.Forms.Clipboard.SetText(prevClip, System.Windows.Forms.TextDataFormat.UnicodeText); } catch { }
-                }
+                try { if (tempFile != null && File.Exists(tempFile)) File.Delete(tempFile); } catch { }
             }
+        }
 
-            // 成功判据（探针实证）：
-            // A 按纯文本贴入（段落出现明文 <math）→ Undo + 失败
-            // B/C 目标位置已成为公式区（新建或与相邻区合并）→ 成功
-            // D 什么都没贴（目标仍是纯文本）→ Undo + 失败
+        /// <summary>
+        /// InsertFile 插入完整段落（自带段落标记），会把原段落一分为三：前文¶公式¶后文。
+        /// 按片段原位置删除多余的段落标记，恢复单段结构。
+        /// </summary>
+        private static void MergeSplitParagraphs(Document doc, Range target, int segStart, int segLen, int paraLen)
+        {
             try
             {
-                string paraText = target.Paragraphs[1].Range.Text ?? "";
-                if (paraText.Contains("<math"))
+                OMath om = target.OMaths[1];
+                if (om == null) return;
+                Paragraph mathPara = om.Range.Paragraphs[1];
+                if (mathPara == null) return;
+
+                bool known = segStart >= 0 && paraLen >= 0 && segLen > 0;
+                bool hasTextBefore = !known || segStart > 0;
+                bool hasTextAfter = known && segStart + segLen < paraLen;
+
+                if (hasTextBefore)
                 {
-                    try { doc.Undo(); } catch { }
-                    return false;
+                    int s = mathPara.Range.Start;
+                    if (s > 0)
+                    {
+                        Range del = doc.Range(s - 1, s);
+                        if ((del.Text ?? "") == "\r") del.Delete();
+                    }
+                }
+
+                if (hasTextAfter)
+                {
+                    int e = mathPara.Range.End - 1;
+                    if (e > mathPara.Range.Start)
+                    {
+                        Range del2 = doc.Range(e, e + 1);
+                        if ((del2.Text ?? "") == "\r") del2.Delete();
+                    }
                 }
             }
             catch { }
+        }
 
-            try
+
+        private static System.Xml.Xsl.XslCompiledTransform _xsl;
+        private static string _xslPath;
+
+        public static string TransformForProbe(string mathml, string xslPath) { return XslMathmlToOmml(mathml, xslPath); }
+
+        private static string XslMathmlToOmml(string mathml, string xslPath)
+        {
+            if (_xsl == null || _xslPath != xslPath)
             {
-                if (target.OMaths.Count > 0) return true;
-                // 目标区间可能已被合并区整体吞并导致区间折叠：以粘贴点后一字符复核
-                var probe = target.Duplicate;
-                probe.Collapse(NetOffice.WordApi.Enums.WdCollapseDirection.wdCollapseEnd);
-                probe.MoveEnd(NetOffice.WordApi.Enums.WdUnits.wdCharacter, 1);
-                if (probe.OMaths.Count > 0) return true;
+                var t = new System.Xml.Xsl.XslCompiledTransform();
+                t.Load(xslPath);
+                _xsl = t;
+                _xslPath = xslPath;
             }
-            catch { }
+            using (var reader = new StringReader(mathml))
+            using (var writer = new StringWriter())
+            {
+                using (var xmlReader = System.Xml.XmlReader.Create(reader))
+                {
+                    _xsl.Transform(xmlReader, null, writer);
+                }
+                return writer.ToString();
+            }
+        }
 
-            try { doc.Undo(); } catch { }
-            return false;
+        /// <summary>把 m:oMath 元素包进最小合法 docx（zip：ContentTypes + rels + document.xml）。</summary>
+        private static byte[] BuildMinimalDocx(string mathElement)
+        {
+            const string w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            const string m = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+            const string r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+            string documentXml =
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<w:document xmlns:w=\"" + w + "\" xmlns:m=\"" + m + "\" xmlns:r=\"" + r + "\">" +
+                "<w:body><w:p>" + mathElement + "</w:p></w:body></w:document>";
+
+            const string contentTypes =
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
+                "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
+                "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>" +
+                "</Types>";
+
+            const string rels =
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
+                "</Relationships>";
+
+            using (var ms = new MemoryStream())
+            {
+                using (var zip = new ZipArchive(ms, ZipArchiveMode.Create))
+                {
+                    WriteEntry(zip, "[Content_Types].xml", contentTypes);
+                    WriteEntry(zip, "_rels/.rels", rels);
+                    WriteEntry(zip, "word/document.xml", documentXml);
+                }
+                return ms.ToArray();
+            }
+        }
+
+        private static void WriteEntry(ZipArchive zip, string path, string content)
+        {
+            ZipArchiveEntry entry = zip.CreateEntry(path, CompressionLevel.Fastest);
+            using (var sw = new StreamWriter(entry.Open(), new UTF8Encoding(false)))
+            {
+                sw.Write(content);
+            }
         }
     }
 }
