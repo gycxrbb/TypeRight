@@ -111,7 +111,7 @@ namespace TypeRight.Acceptance
                 try { app.ScreenUpdating = false; screenOff = true; } catch { }
                 var undo = app.UndoRecord;
                 undo.StartCustomRecord("公式转换");
-                try { result.Formula = new FormulaConverter(doc, null, null).ConvertDocument(); }
+                try { result.Formula = new FormulaConverter(doc, null, TypeRight.Formatting.FormulaConverter.ResolveMml2OmmlPath(env.App)).ConvertDocument(); }
                 finally
                 {
                     try { undo.EndCustomRecord(); } catch { }

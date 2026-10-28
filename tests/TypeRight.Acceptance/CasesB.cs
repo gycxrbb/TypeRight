@@ -171,7 +171,7 @@ namespace TypeRight.Acceptance
                 range.InsertAfter("验证片段 y = a(x - h 说明文字");
                 range.InsertParagraphAfter();
 
-                var stats = new FormulaConverter(doc, null, null).ConvertDocument();
+                var stats = new FormulaConverter(doc, null, TypeRight.Formatting.FormulaConverter.ResolveMml2OmmlPath(env.App)).ConvertDocument();
                 Console.WriteLine("  " + stats.SummaryText());
 
                 env.Check(stats.Failed >= 1, "失败计数 ≥ 1", "≥1", stats.Failed.ToString(), "注入片段: y = a(x - h");

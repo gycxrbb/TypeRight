@@ -32,6 +32,9 @@ namespace TypeRight.Formatting
         private readonly double? _mathSizePt;
         private readonly string _mml2OmmlPath;
 
+        /// <summary>禁用二遍清扫（诊断用）。</summary>
+        public static bool DisableSweep;
+
         /// <summary>回退记录（验收调试用）。</summary>
         public static readonly System.Collections.Generic.List<string> FallbackLog = new System.Collections.Generic.List<string>();
 
@@ -79,94 +82,207 @@ namespace TypeRight.Formatting
         public FormulaStats ConvertDocument()
         {
             var stats = new FormulaStats();
-            Paragraphs paragraphs = _doc.Paragraphs;
-            // 先整表收集再处理：遍历中修改文档会使枚举器失效；Paragraph 代理是活动区间，
-            // 后续插入会自动跟随。注意禁用 Paragraphs[i] 索引器（O(n) 重扫）。
-            var all = new List<Paragraph>();
-            foreach (Paragraph p in paragraphs) all.Add(p);
 
-            for (int i = all.Count - 1; i >= 0; i--)
+            // 纯文本区间（数学区外 gap）精确定位：gap 是纯文本，字符串偏移 = 文档位置，零漂移。
+            // 每轮：取段落的所有 gap → 在 gap 文本内找片段 → 转该 gap 的最后一个片段 → 重扫。
+            // 数学区线性文本天然在 gap 之外，永不重复转换；拆分残留段的尾部文本在 gap 内，天然被覆盖。
+            int guard = 0;
+            bool converted = true;
+            while (converted && guard++ < 600)
             {
-                Paragraph p = all[i];
-                if (p == null) continue;
-                ConvertParagraph(p, stats);
+                converted = false;
+                foreach (Paragraph p in _doc.Paragraphs)
+                {
+                    try
+                    {
+                        foreach (Range gap in TextGapsExcludingMath(p))
+                        {
+                            string gapText;
+                            try { gapText = gap.Text ?? ""; }
+                            catch { continue; }
+                            string trimmed = gapText.TrimEnd('\r', '\a', '\v');
+                            if (trimmed.Trim().Length == 0) continue;
+
+                            var segs = MathSegmenter.FindSegments(trimmed);
+                            if (segs.Count == 0) continue;
+
+                            // 该 gap 的最后一个片段（降序：先转后面的不影响前面）
+                            var seg = segs[segs.Count - 1];
+                            Range rng;
+                            try
+                            {
+                                rng = gap.Duplicate;
+                                rng.Start = gap.Start + seg.Start;
+                                rng.End = rng.Start + seg.Length;
+                            }
+                            catch { continue; }
+
+                            int segStartRel = seg.Start, segLen = seg.Length, paraLen = trimmed.Length;
+                            if (TryConvertRange(rng, seg.Text, false, segStartRel, segLen, paraLen))
+                            {
+                                stats.Converted++;
+                                converted = true;
+                            }
+                            else
+                            {
+                                stats.Failed++;
+                                if (stats.FailedLocations.Count < 50)
+                                    stats.FailedLocations.Add("¶" + ParagraphIndex(p) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
+                                // 失败片段保留原文（安全语义）：跳过它继续转更早的片段
+                                ConvertEarlierSegments(gap, segs, seg, p, stats);
+                            }
+                            break;   // 本段已转一个，重扫外层
+                        }
+                        if (converted) break;   // 重扫全部段落
+                    }
+                    catch { }
+                }
             }
 
-            // 二遍清扫：补转区间指针漂移残留的纯文本片段（残留 Unicode 上下标字符清零）
-            SweepLeftovers(stats);
+            // InsertFile 拆段合并的漏网空段清理
+            RemoveEmptySideEffectParagraphs();
             return stats;
         }
 
+        /// <summary>失败片段之后：把该 gap 内更早的片段按降序继续转换（失败片段保留）。</summary>
+        private void ConvertEarlierSegments(Range gap, List<MathSegmenter.Segment> segs, MathSegmenter.Segment failed,
+            Paragraph p, FormulaStats stats)
+        {
+            for (int i = segs.Count - 2; i >= 0; i--)
+            {
+                var seg = segs[i];
+                if (seg.Start + seg.Length <= failed.Start)
+                {
+                    try
+                    {
+                        Range rng = gap.Duplicate;
+                        rng.Start = gap.Start + seg.Start;
+                        rng.End = rng.Start + seg.Length;
+                        if (TryConvertRange(rng, seg.Text, false, seg.Start, seg.Length, gap.Text.Length))
+                            stats.Converted++;
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        /// <summary>段内数学区之外的纯文本子区间（含可见文本）。</summary>
+        private static List<Range> TextGapsExcludingMath(Paragraph p)
+        {
+            var result = new List<Range>();
+            Range whole = p.Range;
+            int mathCount;
+            try { mathCount = whole.OMaths.Count; } catch { mathCount = 0; }
+            if (mathCount == 0)
+            {
+                result.Add(whole);
+                return result;
+            }
+            var bounds = new List<KeyValuePair<int, int>>();
+            for (int i = 1; i <= mathCount; i++)
+            {
+                try
+                {
+                    Range mr = whole.OMaths[i].Range;
+                    bounds.Add(new KeyValuePair<int, int>(mr.Start, mr.End));
+                }
+                catch { }
+            }
+            bounds.Sort((a, b) => a.Key.CompareTo(b.Key));
+            int start = whole.Start;
+            foreach (var b in bounds)
+            {
+                if (b.Key > start)
+                {
+                    Range gap = whole.Duplicate;
+                    gap.Start = start;
+                    gap.End = b.Key;
+                    if (HasVisible(gap)) result.Add(gap);
+                }
+                if (b.Value > start) start = b.Value;
+            }
+            if (whole.End > start)
+            {
+                Range tail = whole.Duplicate;
+                tail.Start = start;
+                tail.End = whole.End;
+                if (HasVisible(tail)) result.Add(tail);
+            }
+            return result;
+        }
+
         /// <summary>转换单个段落内的公式片段。wholeLine=true 时转换整段（独立公式行场景）。
-        /// 逐段重扫循环：每次迭代重读段落文本、重算区间，从根上规避粘贴/撤销造成的区间指针漂移。</summary>
+        /// 降序单遍：片段集合从原始文本一次计算，从后往前处理——每次插入只影响其后位置。
+        /// （升序重扫方案已废弃：公式区线性文本与底层位置存在错位，公式区后的真实片段会被误杀。）</summary>
         public void ConvertParagraph(Paragraph paragraph, FormulaStats stats, bool wholeLine = false, bool secondPass = false)
         {
             if (paragraph == null || stats == null) return;
 
-            // 含域（目录/交叉引用等）的段落跳过，避免误伤
-            try { if (paragraph.Range.Fields.Count > 0) return; } catch { }
+            Range baseRange = paragraph.Range;
+            string liveText;
+            try { liveText = baseRange.Text ?? ""; }
+            catch { return; }
+
+            try { if (baseRange.Fields.Count > 0) return; } catch { }
+
+            string trimmed = liveText.TrimEnd('\r', '\a', '\v');
+            if (trimmed.Trim().Length == 0) return;
 
             bool inTable = false;
-            try { inTable = Convert.ToBoolean(paragraph.Range.get_Information(WdInformation.wdWithInTable)); }
+            try { inTable = Convert.ToBoolean(baseRange.get_Information(WdInformation.wdWithInTable)); }
             catch { }
 
-            int guard = 0;
-            while (guard++ < 24)
+            List<MathSegmenter.Segment> segments = FindParagraphSegments(liveText, trimmed, wholeLine, secondPass);
+            if (segments.Count == 0) return;
+
+            for (int i = segments.Count - 1; i >= 0; i--)
             {
-                Range baseRange = paragraph.Range;
-                string liveText;
-                try { liveText = baseRange.Text ?? ""; }
-                catch { return; }
-                string trimmed = liveText.TrimEnd('\r', '\a', '\v');
-                if (trimmed.Trim().Length == 0) break;
-
-                List<MathSegmenter.Segment> segments = FindParagraphSegments(liveText, trimmed, wholeLine);
-                if (segments.Count == 0) break;
-
-                // 找第一个“还不是公式区”的片段
-                Range target = null;
-                string original = null;
-                int segStart = -1, segLen = 0;
-                foreach (var seg in segments)
+                var seg = segments[i];
+                Range rng;
+                try
                 {
-                    Range rng;
+                    rng = baseRange.Duplicate;
+                    rng.Start = baseRange.Start + seg.Start;
+                    rng.End = rng.Start + seg.Length;
+                }
+                catch { continue; }
+
+                try { if (rng.OMaths.Count > 0) continue; } catch { }
+
+                // 二遍交集守卫：区间不得与段内任何真实公式区相交。
+                // （公式区线性文本经字符串偏移映射会漂移到区外，OMaths 检查失效导致重复造区——
+                //   以 COM 级真实区间位置做交集判定，公式区伪片段全被拒绝）
+                if (secondPass)
+                {
+                    bool intersects = false;
                     try
                     {
-                        rng = baseRange.Duplicate;
-                        rng.Start = baseRange.Start + seg.Start;
-                        rng.End = rng.Start + seg.Length;
+                        int zoneCount = baseRange.OMaths.Count;
+                        for (int z = 1; z <= zoneCount; z++)
+                        {
+                            Range zr = baseRange.OMaths[z].Range;
+                            if (rng.Start < zr.End && zr.Start < rng.End) { intersects = true; break; }
+                        }
                     }
-                    catch { continue; }
-                    int inMath;
-                    try { inMath = rng.OMaths.Count; } catch { inMath = 0; }
-                    if (inMath > 0) continue;   // 已是公式（含合并），跳过
-                    target = rng;
-                    original = seg.Text;
-                    segStart = seg.Start;
-                    segLen = seg.Length;
-                    break;
+                    catch { }
+                    if (intersects) continue;
                 }
-                if (target == null) break;   // 全部已转或不可定位
 
-                if (TryConvertRange(target, original, secondPass, segStart, segLen, trimmed.Length))
+                if (TryConvertRange(rng, seg.Text, secondPass, seg.Start, seg.Length, trimmed.Length))
                     stats.Converted++;
                 else
                 {
                     stats.Failed++;
                     if (stats.FailedLocations.Count < 50)
-                        stats.FailedLocations.Add("¶" + ParagraphIndex(paragraph) + "  " + (original.Length > 30 ? original.Substring(0, 30) + "…" : original));
-                    // 该片段转换失败：避免死循环，终止本段（失败片段保留原文，符合安全语义）
-                    break;
+                        stats.FailedLocations.Add("¶" + ParagraphIndex(paragraph) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
                 }
             }
 
-            // TC-20（P0）：公式构建会重写单元格 run 的 rPr，w:sz 等显式属性在序列化层丢失
-            // （运行时有效值不变，仅 document.xml 缺标签）。对表格段非公式 run 强制显式回写，
-            // 恢复 w:sz/w:b/w:color/w:rFonts 显式序列化。
+            // TC-20（P0）：公式构建重写单元格 run 的 rPr，对表格段非公式 run 强制显式回写
             if (inTable) ForceExplicitRunProps(paragraph);
         }
 
-        private static List<MathSegmenter.Segment> FindParagraphSegments(string liveText, string trimmed, bool wholeLine)
+        private static List<MathSegmenter.Segment> FindParagraphSegments(string liveText, string trimmed, bool wholeLine, bool secondPass)
         {
             if (wholeLine)
             {
@@ -177,10 +293,59 @@ namespace TypeRight.Formatting
                         new MathSegmenter.Segment { Start = lead, Length = trimmed.Trim().Length, Text = trimmed.Trim() }
                     };
             }
-            return MathSegmenter.FindSegments(trimmed);
+            var segments = MathSegmenter.FindSegments(trimmed);
+            if (!secondPass) return segments;
+
+            // 二遍（残留清理）：只处理仍含 Unicode 上下标/根号字符的片段——
+            // 这些只可能来自未转换的纯文本（已注入公式区的线性文本不含这些字符，映射前已被替换）
+            var residueChars = MathSegmenter.SuperscriptChars + MathSegmenter.SubscriptChars + "√";
+            var result = new List<MathSegmenter.Segment>();
+            foreach (var seg in segments)
+            {
+                foreach (char ch in seg.Text)
+                {
+                    if (residueChars.IndexOf(ch) >= 0)
+                    {
+                        result.Add(seg);
+                        break;
+                    }
+                }
+            }
+            return result;
         }
 
         /// <summary>二遍清扫：区间指针漂移（粘贴/撤销副作用）可能残留未转的纯文本片段，补转。</summary>
+
+        /// <summary>删除非表格内、无公式、无图片的空段落（InsertFile 拆段合并的漏网空段）。</summary>
+        private void RemoveEmptySideEffectParagraphs()
+        {
+            for (int pass = 0; pass < 3; pass++)
+            {
+                bool removed = false;
+                var all = new List<Paragraph>();
+                foreach (Paragraph p in _doc.Paragraphs) all.Add(p);
+                foreach (Paragraph p in all)
+                {
+                    try
+                    {
+                        string t = p.Range.Text ?? "";
+                        if (t.Trim('\r', '\a', '\v', ' ', '\u3000').Length > 0) continue;
+                        try { if (p.Range.OMaths.Count > 0) continue; } catch { }
+                        try { if (p.Range.InlineShapes.Count > 0) continue; } catch { }
+                        bool inTable;
+                        try { inTable = Convert.ToBoolean(p.Range.get_Information(WdInformation.wdWithInTable)); }
+                        catch { inTable = true; }
+                        if (inTable) continue;
+                        p.Range.Delete();
+                        removed = true;
+                        break;   // 集合已变，重新收集
+                    }
+                    catch { }
+                }
+                if (!removed) break;
+            }
+        }
+
         public void SweepLeftovers(FormulaStats stats)
         {
             var all = new List<Paragraph>();

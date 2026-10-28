@@ -30,6 +30,12 @@ namespace TypeRight.Acceptance
                 try { app.Quit(); app.Dispose(); } catch { }
                 return 0;
             }
+            if (filter == "mini")
+            {
+                DiagMini.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return 0;
+            }
             if (filter == "xsl")
             {
                 DiagXsl.Run(env);

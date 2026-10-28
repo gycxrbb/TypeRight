@@ -85,7 +85,7 @@ namespace TypeRight.Acceptance
             Document doc = env.OpenCopy("tc20");
             try
             {
-                var stats = new FormulaConverter(doc, null, null).ConvertDocument();
+                var stats = new FormulaConverter(doc, null, TypeRight.Formatting.FormulaConverter.ResolveMml2OmmlPath(env.App)).ConvertDocument();
                 Console.WriteLine("  " + stats.SummaryText());
                 doc.SaveAs2(env.CopyPath("tc20-out"));
                 doc.Close(false);

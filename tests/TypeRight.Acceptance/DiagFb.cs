@@ -13,7 +13,7 @@ namespace TypeRight.Acceptance
             Document doc = env.OpenCopy("fb");
             try
             {
-                var st = new TypeRight.Formatting.FormulaConverter(doc, null, null).ConvertDocument();
+                var st = new TypeRight.Formatting.FormulaConverter(doc, null, TypeRight.Formatting.FormulaConverter.ResolveMml2OmmlPath(env.App)).ConvertDocument();
                 Console.WriteLine("转换: " + st.SummaryText());
                 var log = TypeRight.Formatting.FormulaConverter.FallbackLog;
                 Console.WriteLine("回退总数: " + log.Count);
