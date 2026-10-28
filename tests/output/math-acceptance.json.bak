@@ -2,7 +2,7 @@
   "schema_version": 2,
   "id": "math-acceptance",
   "name": "数学讲义",
-  "created": "2026-10-27",
+  "created": "2026-10-29",
   "rules": [
     {
       "order": 1,

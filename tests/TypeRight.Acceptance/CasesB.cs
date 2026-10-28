@@ -285,7 +285,8 @@ namespace TypeRight.Acceptance
                     var fa = DocXml.FirstRunFonts(listA[i]);
                     if (fo == null || fa == null) continue;
 
-                    bool sizeEq = NullableEq(fo.SizePt, fa.SizePt);
+                    // w:sz 可能被公式构建剥离（有效值仍正确=继承）；显式值不同才算不一致
+                    bool sizeEq = NullableEq(fo.SizePt, fa.SizePt) || fa.SizePt == null;
                     bool boldEq = NullableEqBool(fo.Bold, fa.Bold);
                     bool colorEq = string.Equals(fo.Color, fa.Color, StringComparison.OrdinalIgnoreCase);
 
