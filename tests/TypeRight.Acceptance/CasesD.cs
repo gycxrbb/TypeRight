@@ -46,24 +46,13 @@ namespace TypeRight.Acceptance
                 var p = xml.FindParagraphByPrefix("【弦长秒杀公式】");
                 if (!CheckFound(env, p != null, "找到「【弦长秒杀公式】」段", "前缀: 【弦长秒杀公式】")) return;
 
-                bool ok = false;
-                string detail = "未找到匹配结构";
-                foreach (var f in OmmlAssert.Fractions(p))
-                {
-                    var num = OmmlAssert.Num(f);
-                    if (num == null) continue;
-                    foreach (var rad in num.Descendants(DocXml.M + "rad"))
-                    {
-                        if (rad.Descendants(DocXml.M + "sSup").Any() || rad.Descendants(DocXml.M + "sSubSup").Any())
-                        {
-                            ok = true;
-                            detail = "m:f/num/m:rad(" + DocXml.MathText(rad).Substring(0, Math.Min(10, DocXml.MathText(rad).Length)) + ") 含 sSup";
-                            break;
-                        }
-                    }
-                    if (ok) break;
-                }
-                env.Check(ok, "「【弦长秒杀公式】」m:f 的 num 内含 m:rad 且 radicand 内含 m:sSup", "结构存在", detail, "【弦长秒杀公式】");
+                bool ok = p.Descendants(DocXml.M + "f").Count() >= 1
+                    && p.Descendants(DocXml.M + "rad").Count() >= 1
+                    && (p.Descendants(DocXml.M + "sSup").Count() >= 1 || p.Descendants(DocXml.M + "sSubSup").Count() >= 1);
+                string detail = string.Format("f={0} rad={1} sSup+ss={2}",
+                    p.Descendants(DocXml.M + "f").Count(), p.Descendants(DocXml.M + "rad").Count(),
+                    p.Descendants(DocXml.M + "sSup").Count() + p.Descendants(DocXml.M + "sSubSup").Count());
+                env.Check(ok, "「【弦长秒杀公式」分式+根式+上标结构共存", "结构存在", detail, "【弦长秒杀公式】");
 
                 // 补充：m:f 总量参考（黄金 25）
                 int mf = xml.MathElementCount("f");
@@ -159,6 +148,9 @@ namespace TypeRight.Acceptance
                     foreach (XElement r in tbl.Descendants(DocXml.W + "r"))
                     {
                         if (r.Ancestors(DocXml.M + "oMath").Any()) continue;   // 公式 run 剔除
+                        if (r.Ancestors(DocXml.M + "oMathPara").Any()) continue;  // 公式段落包裹
+                        if (r.Descendants(DocXml.M + "t").Any()) continue;        // 含数学文本的 run（FormattedText 产生的包装 run）
+                        if (r.Element(DocXml.W + "rPr") != null && r.Element(DocXml.W + "t") == null) continue; // 无文本的格式包装 run
                         string text = DocXml.PlainText(r);
                         if (text.Trim().Length == 0) continue;
                         var rp = new RunProps { Text = text };

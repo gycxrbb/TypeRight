@@ -134,6 +134,14 @@ namespace TypeRight.Formatting
                     }
                 }
                 catch { }
+
+                // TC-20（P0）：公式构建重写单元格 run 的 rPr，对表格段非公式 run 强制显式回写
+                try
+                {
+                    bool inTbl = Convert.ToBoolean(p.Range.get_Information(WdInformation.wdWithInTable));
+                    if (inTbl) ForceExplicitRunProps(p);
+                }
+                catch { }
             }
             return stats;
         }

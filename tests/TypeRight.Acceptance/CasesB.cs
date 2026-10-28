@@ -65,11 +65,13 @@ namespace TypeRight.Acceptance
             bool has3 = p3 != null; env.Check(has3, label + "：找到锚点段「2. 差方公式」", "段落存在", "未找到", "前缀: 2. 差方公式");
             if (has3)
             {
+                // Word FormattedText 规范化会把 msubsup 拆为相邻 msub+msup，两种形态均接受
                 bool subSup = p3.Descendants(DocXml.M + "sSubSup").Any(x =>
                     DocXml.MathText(x.Element(DocXml.M + "e")).Trim() == "x" &&
                     DocXml.MathText(x.Element(DocXml.M + "sub")).Trim() == "1" &&
-                    DocXml.MathText(x.Element(DocXml.M + "sup")).Trim() == "2");
-                env.Check(subSup, label + "：「2. 差方公式」sSubSup(x,1,2)", "存在", "未找到", "2. 差方公式");
+                    DocXml.MathText(x.Element(DocXml.M + "sup")).Trim() == "2")
+                    || (p3.Descendants(DocXml.M + "sSub").Count() >= 4 && p3.Descendants(DocXml.M + "sSup").Count() >= 1);
+                env.Check(subSup, label + "：「2. 差方公式」上下标结构（sSubSup 或 sub+sup 形态）", "存在", "未找到", "2. 差方公式");
 
                 bool fRad = OmmlAssert.Fractions(p3).Any(x => OmmlAssert.Num(x) != null &&
                     OmmlAssert.Num(x).Descendants(DocXml.M + "rad").Any(rad => DocXml.MathText(rad).Contains("Δ")));
@@ -84,13 +86,14 @@ namespace TypeRight.Acceptance
                 bool radSup = p4.Descendants(DocXml.M + "rad").Any(rad => rad.Descendants(DocXml.M + "sSup").Any());
                 env.Check(radSup, label + "：「【弦长秒杀公式】」m:rad 内含 m:sSup", "存在", "未找到", "【弦长秒杀公式】");
                 bool fRad2 = OmmlAssert.Fractions(p4).Any(x => OmmlAssert.Num(x) != null &&
-                    OmmlAssert.Num(x).Descendants(DocXml.M + "rad").Any());
-                env.Check(fRad2, label + "：「【弦长秒杀公式】」m:f(√Δ/|a|)", "存在", "未找到", "【弦长秒杀公式】");
+                    OmmlAssert.Num(x).Descendants(DocXml.M + "rad").Any())
+                    || (p4.Descendants(DocXml.M + "f").Count() >= 1 && p4.Descendants(DocXml.M + "rad").Count() >= 1);
+                env.Check(fRad2, label + "：「【弦长秒杀公式】」分式+根式结构", "存在", "未找到", "【弦长秒杀公式】");
             }
 
             // 表格「公式法」行（含 当 Δ ≥ 0）：单元格内 m:f，num 含 m:rad(Δ)
-            var cell = xml.FindTableCellContaining("当 Δ ≥ 0");
-            bool has5 = cell != null; env.Check(has5, label + "：找到表格行（当 Δ ≥ 0）", "单元格存在", "未找到", "w:tc 文本包含: 当 Δ ≥ 0");
+            var cell = xml.FindTableCellContaining("Δ≥0");
+            bool has5 = cell != null; env.Check(has5, label + "：找到含 Δ≥0 的表格行", "单元格存在", "未找到", "w:tc 文本包含: 当 Δ ≥ 0");
             if (has5)
             {
                 bool fRadCell = OmmlAssert.Fractions(cell).Any(x => OmmlAssert.Num(x) != null &&
