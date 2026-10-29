@@ -8,15 +8,17 @@
         Focusable="False"
         TextOptions.TextFormattingMode="Display">
     <Border Background="#FFFFFF" CornerRadius="10" BorderBrush="#C9D2E3" BorderThickness="1"
-            Margin="8,8,8,10">
+            Margin="8,8,8,10" MouseLeftButtonDown="OnBarDragMove">
         <Border.Effect>
             <DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.28" />
         </Border.Effect>
         <StackPanel Margin="14,10,14,12">
 
-            <!-- 顶行：匹配计数 + 关闭 -->
-            <Grid>
+            <!-- 顶行：拖动把手 + 匹配计数 + 关闭（把手区可拖动整个浮条） -->
+            <Grid Cursor="SizeAll" ToolTip="按住可拖动">
                 <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="⠿" FontFamily="Segoe UI Symbol" FontSize="13" Foreground="#B8BFCB"
+                               VerticalAlignment="Center" Margin="0,0,7,0" />
                     <Ellipse Width="9" Height="9" Fill="#2B5CB8" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <TextBlock x:Name="TxtCount" Text="已匹配 N 段" FontSize="13.5" FontWeight="Bold"
                                Foreground="#1F2329" VerticalAlignment="Center" />

@@ -25,6 +25,8 @@ namespace TypeRight.Addin.UI
 
         private readonly TypeRightController _controller;
         private bool _suppressEvents;
+        private bool _dragging;    // DragMove 模态移动中（此间 Esc 只取消拖动，不关闭会话）
+        private bool _userMoved;   // 用户手动拖过：此后不再回弹到样本段落旁
         private Popup _colorPopup;
 
         public FloatBar(TypeRightController controller)
@@ -60,9 +62,11 @@ namespace TypeRight.Addin.UI
             TxtPerf.Text = count > 1 ? duration.TotalMilliseconds.ToString("0") + "ms" : "";
         }
 
-        /// <summary>定位到样本段落旁（Word GetPoint 给出屏幕物理像素，需换算 WPF DIP）。</summary>
+        /// <summary>定位到样本段落旁（Word GetPoint 给出屏幕物理像素，需换算 WPF DIP）。
+        /// 用户手动拖动过则保持其位置，仅夹回可见屏幕。</summary>
         public void PositionNear(WdApplication app, Paragraph sample)
         {
+            if (_userMoved) return;
             try
             {
                 int x, y, w, h;
@@ -117,6 +121,7 @@ namespace TypeRight.Addin.UI
 
         public void ShowBar()
         {
+            if (_userMoved) EnsureOnScreen();  // 分辨率/显示器变化后防止停在屏外
             ResetTransientControls();
             Show();
             Activate();
@@ -147,6 +152,42 @@ namespace TypeRight.Addin.UI
         }
 
         // ---- 事件 ----
+
+        /// <summary>整个条身任意非控件位置按住左键即可拖动（标题行为显式把手）。
+        /// 按钮/下拉/复选框自行处理鼠标按下（e.Handled），不会误触拖动。</summary>
+        private void OnBarDragMove(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left || _dragging) return;
+
+            double beforeLeft = Left, beforeTop = Top;
+            _dragging = true;
+            try { DragMove(); }
+            catch { } // 按下后立即松开等边界情况，DragMove 会抛 InvalidOperationException
+            finally { _dragging = false; }
+
+            // Esc 取消拖动时 DragMove 会弹回原位；只有真实移动过才视为用户接管了位置
+            if (Math.Abs(Left - beforeLeft) > 0.5 || Math.Abs(Top - beforeTop) > 0.5) _userMoved = true;
+        }
+
+        /// <summary>用户拖动后的位置在下次显示时夹回可见屏幕（多显示器/改分辨率后防跑出屏外）。</summary>
+        private void EnsureOnScreen()
+        {
+            try
+            {
+                double scale = GetDpiScale();
+                var screen = System.Windows.Forms.Screen.FromPoint(
+                    new System.Drawing.Point((int)(Left * scale), (int)(Top * scale)));
+                double monLeft = screen.Bounds.Left / scale, monTop = screen.Bounds.Top / scale;
+                double monRight = screen.Bounds.Right / scale, monBottom = screen.Bounds.Bottom / scale;
+                double w = ActualWidth > 0 ? ActualWidth : Width;
+                double h = ActualHeight > 0 ? ActualHeight : 120;
+                if (Left + w > monRight) Left = Math.Max(monLeft, monRight - w - 8);
+                if (Top + h > monBottom) Top = Math.Max(monTop, monBottom - h - 8);
+                if (Left < monLeft) Left = monLeft + 8;
+                if (Top < monTop) Top = monTop + 8;
+            }
+            catch { }
+        }
 
         private void OnFontSelected(object sender, SelectionChangedEventArgs e)
         {
@@ -252,6 +293,7 @@ namespace TypeRight.Addin.UI
         {
             if (e.Key == Key.Escape)
             {
+                if (_dragging) { e.Handled = true; return; } // 拖动中 Esc 仅取消本次拖动（DragMove 弹回原位）
                 _controller.CloseSession();
                 e.Handled = true;
             }
