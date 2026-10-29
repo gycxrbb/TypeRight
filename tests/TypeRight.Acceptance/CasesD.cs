@@ -86,10 +86,7 @@ namespace TypeRight.Acceptance
 
             env.Check(before.Count > 0 && after.Count > 0, "表格 run 提取基数 > 0",
                 ">0", before.Count + "/" + after.Count, null);
-            env.Check(before.Count == after.Count, "非公式 run 数量不变（公式 run 剔除后）",
-                before.Count.ToString(), after.Count.ToString(), null);
-
-            if (before.Count != after.Count) return;
+            // 数量可能因公式转换产生 OMML 包装 run 拆分，改为按文本配对（在比较逻辑中处理）
 
             // FormattedText 产生 OMML 包装 run（数量与原文不对齐），按文本配对比较格式
             var beforeText = before.Where(b => !string.IsNullOrWhiteSpace(b.Text)).ToList();
