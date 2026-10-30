@@ -24,6 +24,12 @@ namespace TypeRight.Acceptance
             app.DisplayAlerts = WdAlertLevel.wdAlertsNone;
             var env = new TestEnv(app);
 
+            if (filter == "p4")
+            {
+                DiagP4.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return 0;
+            }
             if (filter == "p3")
             {
                 DiagP3.Run(env);

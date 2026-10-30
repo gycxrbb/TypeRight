@@ -45,20 +45,30 @@ namespace TypeRight.Signature
             return string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)
                 && SizePtEquals(SizePt, other.SizePt)
-                && BoldEffective == other.BoldEffective
+                && BoldEquals(this, other)
                 && ColorRgb == other.ColorRgb;
         }
 
         // Word 的 Font.Bold/Italic 会返回非标准杂值（实测混入颜色字节，如 1717853）。
-        // 归一化：只有 -1 视为真，其余（0 / 9999999 / 杂值）一律视为“非加粗/非斜体”。
+        // 归一化：只有 -1 视为真，0 视为假，其余（9999999/杂值）= 未知。
         public bool BoldEffective { get { return BoldRaw == -1; } }
+        public bool BoldKnown { get { return BoldRaw == -1 || BoldRaw == 0; } }
         public bool ItalicEffective { get { return ItalicRaw == -1; } }
 
+        // 未知字号不等于未知字号：读取失败的段落曾因 NaN==NaN 判等而互相"同类"（跨判 bug）。
+        // 严格方向取舍：宁可少命中，不可错命中。
         private static bool SizePtEquals(double a, double b)
         {
-            if (double.IsNaN(a) && double.IsNaN(b)) return true;
             if (double.IsNaN(a) || double.IsNaN(b)) return false;
             return Math.Abs(a - b) < 0.01;
+        }
+
+        // 加粗含未知（杂值）即不同类：杂值曾折为"非加粗"，与真·非加粗跨判
+        // （视觉加粗但读到杂值的标题，会与正文判同类）。
+        private static bool BoldEquals(FormatSignature a, FormatSignature b)
+        {
+            if (!a.BoldKnown || !b.BoldKnown) return false;
+            return a.BoldRaw == b.BoldRaw;
         }
 
         public override bool Equals(object obj)
@@ -103,7 +113,7 @@ namespace TypeRight.Signature
             if (!string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
-            if ((ignore & IgnoreDims.Bold) == 0 && BoldEffective != other.BoldEffective) return false;
+            if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(this, other)) return false;
             if ((ignore & IgnoreDims.Color) == 0 && ColorRgb != other.ColorRgb) return false;
             return true;
         }

@@ -41,8 +41,20 @@ namespace TypeRight.Tests
         {
             var a = Sig(); a.SizePt = double.NaN;
             var b = Sig(); b.SizePt = double.NaN;
-            Assert.True(a.Equals(b));
+            // 修复后语义：未知字号不等于未知字号（读取失败的段落曾因 NaN==NaN 判等而互相"同类"）
+            Assert.False(a.Equals(b));
             Assert.False(a.Equals(Sig()));
+        }
+
+        [Fact]
+        public void JunkBoldNotEqualToPlain()
+        {
+            var a = Sig(); a.BoldRaw = 1717853;   // Word 杂值（视觉上加粗但读到垃圾）
+            var b = Sig(); b.BoldRaw = 0;         // 真·非加粗
+            Assert.False(a.Equals(b));            // 杂值不得折为"非加粗"参与比较
+            var c = Sig(); c.BoldRaw = -1;        // 真·加粗
+            Assert.False(a.Equals(c));
+            Assert.True(b.Equals(Sig()));
         }
 
         [Fact]

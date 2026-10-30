@@ -180,6 +180,18 @@ namespace TypeRight.Addin.Controllers
             _session.LastMatchDuration = result.Duration;
             if (_floatBar != null)
                 _floatBar.UpdateMatched(result.Count, result.Duration);
+
+            // 命中摘要：现场诊断"为什么被判同类"（样本签名 + 命中段签名对比）
+            try
+            {
+                var summary = new System.Text.StringBuilder();
+                for (int i = 0; i < Math.Min(6, result.Paragraphs.Count); i++)
+                {
+                    try { summary.Append(" | ").Append(FormatSignatureReader.Read(result.Paragraphs[i])); } catch { }
+                }
+                TypeRightAddin.Log("  [命中摘要] sample=" + _session.SampleSignature + summary);
+            }
+            catch { }
         }
 
         /// <summary>浮动条：忽略维度变化（PRD：实时重算）。</summary>
@@ -242,6 +254,19 @@ namespace TypeRight.Addin.Controllers
                 _saveOffered = true;
                 ShowToast("这次操作可以存为方案，下份同类文档一键完成。", "存为方案", () => OpenProfiles(saveMode: true));
             }
+        }
+
+        /// <summary>关闭文档前：若活动会话在该文档上，先清高亮再放行（防止临时黄标被存盘）。</summary>
+        public void ClearSessionIfDoc(Document doc)
+        {
+            if (_session == null || doc == null) return;
+            try
+            {
+                if (!ReferenceEquals(_session.Doc?.UnderlyingObject, doc.UnderlyingObject) &&
+                    !string.Equals(SafeFullName(doc), _session.DocFullName, StringComparison.OrdinalIgnoreCase)) return;
+            }
+            catch { return; }
+            CloseSession(offerSave: false);
         }
 
         /// <summary>光标移到命中集之外 → 关闭浮动条（PRD P0-2：点击文档其他处关闭）。</summary>

@@ -45,6 +45,7 @@ namespace TypeRight.Addin.UI
 
             PreviewKeyDown += OnPreviewKeyDown;
             Deactivated += OnDeactivated;
+            Closed += (s, e) => EscHook.Uninstall();
         }
 
         public void SetFonts(IList<string> fonts)
@@ -65,43 +66,88 @@ namespace TypeRight.Addin.UI
             TxtCount.Text = count <= 1 ? "仅当前段落" : "已匹配 " + count + " 段";
         }
 
-        /// <summary>定位到样本段落旁（Word GetPoint 给出屏幕物理像素，需换算 WPF DIP）。
-        /// 用户手动拖动过则保持其位置，仅夹回可见屏幕。</summary>
+        /// <summary>定位：优先出现在选中文本/样本段首个可见字符的右下方（鼠标附近）；
+        /// 上下左右溢出时向 Word 窗口内侧收；取不到坐标时 Word 窗口居中。
+        /// GetPoint 返回屏幕物理像素，需换算 WPF DIP。</summary>
         public void PositionNear(WdApplication app, Paragraph sample)
         {
             if (_userMoved) return;
             try
             {
+                double scale = GetDpiScale();
+
+                // 锚点 = 样本段首个可见字符（比整段 GetPoint 稳：长段的矩形会给出奇怪坐标）
+                int anchorStart = sample.Range.Start;
+                string text = sample.Range.Text ?? "";
+                int limit = Math.Min(text.Length, 16);
+                for (int i = 0; i < limit; i++)
+                {
+                    char ch = text[i];
+                    if (ch == '\r' || ch == '\a' || ch == '\v' || ch == ' ' || ch == '　' || ch == '\t') continue;
+                    anchorStart = sample.Range.Start + i;
+                    break;
+                }
+
                 int x, y, w, h;
                 WdApp.Window win = app.ActiveWindow;
-                win.GetPoint(out x, out y, out w, out h, sample.Range);
+                win.GetPoint(out x, out y, out w, out h, sample.Range.Document.Range(anchorStart, anchorStart + 1));
 
-                double dpiScale = GetDpiScale();
-                double px = x / dpiScale, py = y / dpiScale;
-                double ph = h / dpiScale;
-
-                // 优先放段落左侧，不够放右侧；再夹到屏幕内
+                double px = x / scale, py = y / scale, ph = h / scale;
                 double barW = ActualWidth > 0 ? ActualWidth : Width;
-                double barH = ActualHeight > 0 ? ActualHeight : 140;
-                double left = px - barW - 12;
-                if (left < 0) left = px + w / dpiScale + 12;
-                double top = py - barH - 6;
-                if (top < 0) top = py + ph + 6;
+                double barH = ActualHeight > 0 ? ActualHeight : 150;
+
+                // 锚点右下方；右溢出向左平移，下溢出改放上方；最后夹进屏幕
+                double left = px + 18;
+                double top = py + ph + 8;
+                if (top + barH > ScreenBottom(scale) - 8) top = py - barH - 8;
 
                 var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(x, y));
-                double screenRight = screen.Bounds.Right / dpiScale;
-                double screenBottom = screen.Bounds.Bottom / dpiScale;
-                if (left + barW > screenRight) left = screenRight - barW - 8;
-                if (top + barH > screenBottom) top = Math.Max(8, screenBottom - barH - 8);
+                double monLeft = screen.Bounds.Left / scale, monRight = screen.Bounds.Right / scale;
+                if (left + barW > monRight) left = monRight - barW - 12;
+                if (left < monLeft) left = monLeft + 12;
+                if (top < 0) top = 8;
 
                 Left = left;
                 Top = top;
             }
             catch
             {
-                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                try { CenterOverWordWindow(app); }
+                catch { WindowStartupLocation = WindowStartupLocation.CenterScreen; }
             }
         }
+
+        private double ScreenBottom(double scale)
+        {
+            var s = System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position);
+            return s.Bounds.Bottom / scale;
+        }
+
+        /// <summary>兜底：Word 活动窗口中央偏下（不是屏幕中央——多显示器下更贴近视线）。</summary>
+        private void CenterOverWordWindow(WdApplication app)
+        {
+            int hwnd = 0;
+            try { hwnd = app.ActiveWindow.Hwnd; } catch { }
+            if (hwnd == 0) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
+            var r = new Win32Rect();
+            if (!GetWindowRect(new IntPtr(hwnd), out r)) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
+            double scale = GetDpiScale();
+            double monW = System.Windows.Forms.Screen.FromPoint(
+                new System.Drawing.Point((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2)).Bounds.Width / scale;
+            double barW = ActualWidth > 0 ? ActualWidth : Width;
+            double barH = ActualHeight > 0 ? ActualHeight : 150;
+            // 窗口矩形是物理像素；宽度取显示器逻辑宽以容多显示器负坐标
+            double wordCenterX = (r.Left + r.Right) / 2.0 / scale;
+            Left = wordCenterX - barW / 2;
+            if (Left + barW > monW) Left = monW - barW - 12;
+            Top = (r.Top + r.Bottom) / 2.0 / scale - barH / 2 + 80;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out Win32Rect rect);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Win32Rect { public int Left, Top, Right, Bottom; }
 
         // ───────── 主题（跟随宿主 Word） ─────────
 
@@ -181,12 +227,97 @@ namespace TypeRight.Addin.UI
             TryAttachToWordWindow();
             Show();
             Activate();
+            EscHook.Install(this);
         }
 
         public void HideBar()
         {
+            EscHook.Uninstall();
             try { Hide(); } catch { }
         }
+
+        /// <summary>Esc 关闭（提示"Esc 关闭"必须真的好用）：浮条可见期间挂低级键盘钩子，
+        /// Esc 且前台窗口属于本 Word 进程时消费并结束会话；焦点在浮条内时走原有 PreviewKeyDown。</summary>
+        private static class EscHook
+        {
+            private const int WH_KEYBOARD_LL = 13;
+            private const uint WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
+            private const int VK_ESCAPE = 0x1B;
+
+            private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+            private static HookProc _proc;
+            private static IntPtr _hook;
+            private static WeakReference<FloatBar> _bar;
+
+            [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint threadId);
+            [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+            [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+            [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(IntPtr moduleName);
+            [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+            [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct KbdLlHookStruct { public uint VkCode, ScanCode, Flags, Time; public IntPtr ExtraInfo; }
+
+            public static void Install(FloatBar bar)
+            {
+                _bar = new WeakReference<FloatBar>(bar);
+                if (_hook != IntPtr.Zero) return;
+                try
+                {
+                    _proc = OnHook;
+                    _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(IntPtr.Zero), 0);
+                }
+                catch { _hook = IntPtr.Zero; }
+            }
+
+            public static void Uninstall()
+            {
+                if (_hook == IntPtr.Zero) return;
+                try { UnhookWindowsHookEx(_hook); } catch { }
+                _hook = IntPtr.Zero;
+            }
+
+            private static IntPtr OnHook(int code, IntPtr wParam, IntPtr lParam)
+            {
+                if (code == 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
+                {
+                    var kb = (KbdLlHookStruct)Marshal.PtrToStructure(lParam, typeof(KbdLlHookStruct));
+                    if (kb.VkCode == VK_ESCAPE)
+                    {
+                        FloatBar bar = null;
+                        bool alive = _bar != null && _bar.TryGetTarget(out bar);
+                        if (alive && bar.IsVisible && !bar.IsDragging)
+                        {
+                            uint pid;
+                            GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+                            if (pid == CurrentProcessId)
+                            {
+                                // 关闭并消费按键（返回 1 = Word 不再收到这枚 Esc）
+                                try { bar.Dispatcher.BeginInvoke(new Action(() => bar.EscapeClose())); } catch { }
+                                return (IntPtr)1;
+                            }
+                        }
+                    }
+                }
+                return CallNextHookEx(_hook, code, wParam, lParam);
+            }
+
+            private static uint CurrentProcessId
+            {
+                get { return (uint)System.Diagnostics.Process.GetCurrentProcess().Id; }
+            }
+        }
+
+        /// <summary>Esc 钩子入口（拖动中留给 DragMove 自己取消，不重复处理）。</summary>
+        private void EscapeClose()
+        {
+            if (_dragging) return;
+            try { _controller.CloseSession(); } catch { }
+        }
+
+        /// <summary>拖动进行中（Esc 钩子据此放行按键给 DragMove 取消拖动）。</summary>
+        public bool IsDragging { get { return _dragging; } }
 
         /// <summary>归属 Word 活动窗口：随 Word 最小化/置底，不作为全局置顶遮挡其他程序。</summary>
         private void TryAttachToWordWindow()

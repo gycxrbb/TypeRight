@@ -56,10 +56,12 @@ namespace TypeRight.Addin
             {
                 // 点击文档其他处 → 关闭浮动条（PRD P0-2）
                 Application.WindowSelectionChangeEvent += Application_WindowSelectionChange;
+                // 关闭文档前清掉同类选择的临时高亮（否则用户保存文档会把黄色标记写进文件）
+                Application.DocumentBeforeCloseEvent += Application_DocumentBeforeClose;
             }
             catch (Exception ex)
             {
-                Log("WindowSelectionChange 订阅失败: " + ex.Message);
+                Log("事件订阅失败: " + ex.Message);
             }
             try
             {
@@ -116,6 +118,18 @@ namespace TypeRight.Addin
             catch (Exception ex)
             {
                 Log("HandleSelectionChange: " + ex.Message);
+            }
+        }
+
+        private void Application_DocumentBeforeClose(NetOffice.WordApi.Document doc, ref bool cancel)
+        {
+            try
+            {
+                Controller.ClearSessionIfDoc(doc);
+            }
+            catch (Exception ex)
+            {
+                Log("DocumentBeforeClose: " + ex.Message);
             }
         }
 
