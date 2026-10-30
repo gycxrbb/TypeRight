@@ -21,6 +21,9 @@ namespace TypeRight.Addin.Controllers
         public FormatSignature SampleSignature;
         /// <summary>样本段落是否在表格内（正文/表格分区，按表格区间位置判定）。</summary>
         public bool SampleInTable;
+        /// <summary>最近一次匹配计数/耗时（浮条首显即用真值，不等下一次重算）。</summary>
+        public int LastMatchCount;
+        public TimeSpan LastMatchDuration;
         public FormatSignature.IgnoreDims Ignore;
         public List<Paragraph> Matched = new List<Paragraph>();
         public SimilarSelector.HighlightSession Highlights;
@@ -157,16 +160,24 @@ namespace TypeRight.Addin.Controllers
                 FormatSignatureReader.TicksText / ticksPerMs, FormatSignatureReader.TicksProbe / ticksPerMs,
                 FormatSignatureReader.TicksFont / ticksPerMs, FormatSignatureReader.TicksAlign / ticksPerMs));
 
-            // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈
+            // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈；批量写期间关屏幕刷新防闪烁卡顿
             try
             {
                 var undo = App.UndoRecord;
                 undo.StartCustomRecord("TypeRight 匹配标记");
+                bool screenOff = false;
+                try { App.ScreenUpdating = false; screenOff = true; } catch { }
                 try { _session.Highlights.Apply(result); }
-                finally { undo.EndCustomRecord(); }
+                finally
+                {
+                    undo.EndCustomRecord();
+                    if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
+                }
             }
             catch { }
 
+            _session.LastMatchCount = result.Count;
+            _session.LastMatchDuration = result.Duration;
             if (_floatBar != null)
                 _floatBar.UpdateMatched(result.Count, result.Duration);
         }
@@ -483,6 +494,27 @@ namespace TypeRight.Addin.Controllers
             _addin.RefreshRibbonTheme();   // 宿主主题变化 → 刷新功能区图标配色
             _floatBar.PositionNear(App, sample);
             _floatBar.ShowBar();
+            // 首次会话浮条是刚创建的（RecomputeMatches 时还不存在），用会话里的真值补刷计数
+            if (_session != null)
+                _floatBar.UpdateMatched(_session.LastMatchCount, _session.LastMatchDuration);
+        }
+
+        /// <summary>空闲时预建浮条（隐藏）：把 WPF 窗口初始化 + 字体列表装载
+        /// 从"同类选择"首次点击挪到 Word 启动后的空闲期。</summary>
+        public void PrewarmFloatBar()
+        {
+            if (_floatBar != null) return;
+            try
+            {
+                _floatBar = new FloatBar(this);
+                _floatBar.SetFonts(FontListProvider.GetFontList());
+                TypeRightAddin.Log("PrewarmFloatBar: ok");
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("PrewarmFloatBar: " + ex.Message);
+                try { if (_floatBar != null) { _floatBar.Close(); _floatBar = null; } } catch { }
+            }
         }
 
         /// <summary>自动化验证：ShowActivated=false 重显悬浮条（后台无前台权时不触发失焦隐藏）。</summary>

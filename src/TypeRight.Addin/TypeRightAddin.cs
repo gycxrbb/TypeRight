@@ -63,6 +63,15 @@ namespace TypeRight.Addin
             }
             try
             {
+                // 后台预热字体枚举（InstalledFontCollection 要 1~2s，别落在首次点击路径上）
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try { UI.FontListProvider.GetFontList(); } catch { }
+                });
+            }
+            catch { }
+            try
+            {
                 // 暴露给自动化验证脚本（COMAddIns.Item("TypeRight.Connect").Object）
                 var comAddin = addInInst as NetOffice.OfficeApi.COMAddIn;
                 if (comAddin != null)
@@ -89,6 +98,12 @@ namespace TypeRight.Addin
 
         private void Application_WindowSelectionChange(NetOffice.WordApi.Selection selection)
         {
+            if (_prewarmQueued == false)
+            {
+                _prewarmQueued = true;
+                // 空闲期预建浮条（隐藏）：WPF 初始化 ~1s 挪出"同类选择"首次点击
+                QueueOnWordUiThread(() => Controller.PrewarmFloatBar(), 2000);
+            }
             if (_pendingAutomation != null)
             {
                 RunPendingAutomation();
@@ -206,6 +221,7 @@ namespace TypeRight.Addin
 
         private Action _pendingAutomation;
         private Win32TimerProc _timerProc;   // 持引用防 GC 回收原生回调桩
+        private bool _prewarmQueued;         // 浮条空闲预热只排一次
 
         private delegate void Win32TimerProc(IntPtr hWnd, uint msg, IntPtr idEvent, uint dwTime);
 
@@ -244,7 +260,7 @@ namespace TypeRight.Addin
             });
         }
 
-        private void QueueOnWordUiThread(Action action)
+        private void QueueOnWordUiThread(Action action, uint delayMs = 10)
         {
             _pendingAutomation = action;
             try
@@ -253,7 +269,7 @@ namespace TypeRight.Addin
                 try { hwnd = new IntPtr(Application.ActiveWindow.Hwnd); } catch { }
                 if (hwnd == IntPtr.Zero) { Log("queue: no word hwnd"); return; }
                 _timerProc = OnAutomationTimer;
-                SetTimer(hwnd, AutomationTimerId, 10, _timerProc);
+                SetTimer(hwnd, AutomationTimerId, delayMs, _timerProc);
             }
             catch (Exception ex)
             {

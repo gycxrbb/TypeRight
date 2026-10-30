@@ -47,8 +47,13 @@ namespace TypeRight.Addin.UI
     {
         private static readonly string[] Preferred = { "宋体", "黑体", "楷体", "仿宋", "微软雅黑", "等线", "华文中宋", "华文楷体" };
 
+        private static IList<string> _cached;
+
+        /// <summary>系统字体列表（静态缓存；InstalledFontCollection 枚举要 1~2s，
+        /// 加载项启动时后台预热，别让它落在"同类选择"点击路径上）。</summary>
         public static IList<string> GetFontList()
         {
+            if (_cached != null) return _cached;
             var installed = new List<string>();
             try
             {
@@ -58,7 +63,7 @@ namespace TypeRight.Addin.UI
                 }
             }
             catch { }
-            if (installed.Count == 0) return Preferred.ToList();
+            if (installed.Count == 0) { _cached = Preferred.ToList(); return _cached; }
 
             var result = new List<string>();
             var set = new HashSet<string>(installed, StringComparer.OrdinalIgnoreCase);
@@ -70,7 +75,8 @@ namespace TypeRight.Addin.UI
             {
                 if (!result.Contains(f, StringComparer.OrdinalIgnoreCase)) result.Add(f);
             }
-            return result;
+            _cached = result;
+            return _cached;
         }
     }
 }
