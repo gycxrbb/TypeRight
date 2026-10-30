@@ -31,13 +31,46 @@ namespace TypeRight.Signature
         public static SimilarMatchResult Match(Document doc, Paragraph sampleParagraph, FormatSignature.IgnoreDims ignore)
         {
             bool sampleInTable = false;
-            try
-            {
-                sampleInTable = Convert.ToBoolean(sampleParagraph.Range.get_Information(
-                    NetOffice.WordApi.Enums.WdInformation.wdWithInTable));
-            }
+            try { sampleInTable = IsInTable(doc, sampleParagraph.Range.Start); }
             catch { }
             return Match(doc, FormatSignatureReader.Read(sampleParagraph), ignore, sampleInTable);
+        }
+
+        /// <summary>全文表格区间（[start,end) 列表）。正文/表格分区不再用
+        /// Range.Information(wdWithInTable)——该调用在进程内部分状态下会把正文段
+        /// 误判为表格段（实测：Ribbon 线程跑过 WPF 渲染后必现，正文段全被跳过 → 0 命中）。
+        /// 按段落起点是否落在表格区间内判定，稳定且免去了逐段的 Information 开销。</summary>
+        private static List<int[]> TableRanges(Document doc)
+        {
+            var ranges = new List<int[]>();
+            try
+            {
+                foreach (Table t in doc.Tables)
+                {
+                    try { ranges.Add(new[] { t.Range.Start, t.Range.End }); } catch { }
+                }
+            }
+            catch { }
+            return ranges;
+        }
+
+        private static bool IsInTable(List<int[]> tableRanges, int position)
+        {
+            foreach (int[] r in tableRanges)
+                if (position >= r[0] && position < r[1]) return true;
+            return false;
+        }
+
+        private static bool IsInTable(Document doc, int position)
+        {
+            return IsInTable(TableRanges(doc), position);
+        }
+
+        /// <summary>样本段是否在表格内（调用方保存进会话，匹配时传入 4 参重载）。</summary>
+        public static bool IsInTable(Document doc, Paragraph paragraph)
+        {
+            try { return IsInTable(TableRanges(doc), paragraph.Range.Start); }
+            catch { return false; }
         }
 
         /// <summary>样本签名 → 全文匹配（分区：sampleInTable 决定命中文本域）。</summary>
@@ -46,6 +79,8 @@ namespace TypeRight.Signature
             var watch = Stopwatch.StartNew();
             var result = new SimilarMatchResult { SampleSignature = sample, Ignore = ignore };
             if (doc == null || sample.IsEmpty) return result;
+
+            List<int[]> tableRanges = TableRanges(doc);
 
             Paragraphs paragraphs = doc.Paragraphs;
             int count = paragraphs.Count;
@@ -57,10 +92,10 @@ namespace TypeRight.Signature
             foreach (Paragraph p in paragraphs)
             {
                 index++;
-                bool inTable = false;
-                try { inTable = Convert.ToBoolean(p.Range.get_Information(NetOffice.WordApi.Enums.WdInformation.wdWithInTable)); }
-                catch { }
-                if (inTable != sampleInTable) continue;   // 正文/表格分区
+                int start = -1;
+                try { start = p.Range.Start; } catch { }
+                if (start < 0) continue;
+                if (IsInTable(tableRanges, start) != sampleInTable) continue;   // 正文/表格分区
                 FormatSignature s = FormatSignatureReader.Read(p);
                 if (s.IsEmpty) continue;          // 空段/无可见文本不参与
                 if (s.Matches(sample, ignore)) result.Paragraphs.Add(p);

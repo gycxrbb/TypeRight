@@ -19,6 +19,8 @@ namespace TypeRight.Addin.Controllers
         public Paragraph SampleParagraph;
         /// <summary>样本段落的原始签名（应用格式前采集，方案规则用它匹配）。</summary>
         public FormatSignature SampleSignature;
+        /// <summary>样本段落是否在表格内（正文/表格分区，按表格区间位置判定）。</summary>
+        public bool SampleInTable;
         public FormatSignature.IgnoreDims Ignore;
         public List<Paragraph> Matched = new List<Paragraph>();
         public SimilarSelector.HighlightSession Highlights;
@@ -101,6 +103,7 @@ namespace TypeRight.Addin.Controllers
                     DocFullName = SafeFullName(doc),
                     SampleParagraph = sample,
                     SampleSignature = sig,
+                    SampleInTable = SimilarSelector.IsInTable(doc, sample),
                     Ignore = _settings.StrictByDefault ? FormatSignature.IgnoreDims.None : FormatSignature.IgnoreDims.None,
                     Highlights = new SimilarSelector.HighlightSession(doc)
                 };
@@ -126,7 +129,25 @@ namespace TypeRight.Addin.Controllers
         private void RecomputeMatches()
         {
             if (_session == null) return;
-            var result = SimilarSelector.Match(_session.Doc, _session.SampleSignature, _session.Ignore);
+            var result = SimilarSelector.Match(_session.Doc, _session.SampleSignature, _session.Ignore, _session.SampleInTable);
+            if (result.Count == 0)
+            {
+                // 样本段自身必然命中（同签名同分区），0 命中=异常：记录首几段状态便于现场诊断
+                try
+                {
+                    int diag = 0;
+                    foreach (Paragraph dp in _session.Doc.Paragraphs)
+                    {
+                        if (diag >= 6) break;
+                        FormatSignature ds = FormatSignatureReader.Read(dp);
+                        if (ds.IsEmpty) continue;
+                        TypeRightAddin.Log("  [0命中诊断] 段" + diag + " sig=" + ds +
+                            " 匹配=" + ds.Matches(_session.SampleSignature, _session.Ignore));
+                        diag++;
+                    }
+                }
+                catch { }
+            }
             _session.Matched = result.Paragraphs;
             long ticksPerMs = System.Diagnostics.Stopwatch.Frequency / 1000;
             TypeRightAddin.Log(string.Format(
