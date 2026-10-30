@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using WdApp = NetOffice.WordApi;
 using WdApplication = NetOffice.WordApi.Application;
@@ -18,6 +19,7 @@ namespace TypeRight.Addin.UI
     /// <summary>
     /// 浮动格式条（PRD v2 P0-2 / §7.2）：样本段落旁出现；
     /// 取值即时应用（每次一个撤销单元）；宽松勾选实时重算；Esc 或点击别处关闭。
+    /// 主题跟随宿主 Word（OfficeTheme 屏幕实测），整套控件颜色由主题资源驱动。
     /// </summary>
     public partial class FloatBar : Window
     {
@@ -28,6 +30,7 @@ namespace TypeRight.Addin.UI
         private bool _dragging;    // DragMove 模态移动中（此间 Esc 只取消拖动，不关闭会话）
         private bool _userMoved;   // 用户手动拖过：此后不再回弹到样本段落旁
         private Popup _colorPopup;
+        private OfficeThemeKind _themeKind;
 
         public FloatBar(TypeRightController controller)
         {
@@ -58,8 +61,8 @@ namespace TypeRight.Addin.UI
 
         public void UpdateMatched(int count, TimeSpan duration)
         {
+            // 耗时仅进日志（设计稿要求 UI 不显示调试数据）
             TxtCount.Text = count <= 1 ? "仅当前段落" : "已匹配 " + count + " 段";
-            TxtPerf.Text = count > 1 ? duration.TotalMilliseconds.ToString("0") + "ms" : "";
         }
 
         /// <summary>定位到样本段落旁（Word GetPoint 给出屏幕物理像素，需换算 WPF DIP）。
@@ -79,7 +82,7 @@ namespace TypeRight.Addin.UI
 
                 // 优先放段落左侧，不够放右侧；再夹到屏幕内
                 double barW = ActualWidth > 0 ? ActualWidth : Width;
-                double barH = ActualHeight > 0 ? ActualHeight : 120;
+                double barH = ActualHeight > 0 ? ActualHeight : 140;
                 double left = px - barW - 12;
                 if (left < 0) left = px + w / dpiScale + 12;
                 double top = py - barH - 6;
@@ -98,6 +101,55 @@ namespace TypeRight.Addin.UI
             {
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
             }
+        }
+
+        // ───────── 主题（跟随宿主 Word） ─────────
+
+        /// <summary>按主题覆盖全部控件颜色（仅 UI 资源，不触碰文档与控件状态）。</summary>
+        public void ApplyTheme(OfficeThemeKind kind)
+        {
+            _themeKind = kind;
+            ThemePalette p = ThemePalette.Get(kind);
+            SetBrush("PanelBrush", p.Panel);
+            SetBrush("PanelBorderBrush", p.PanelBorder);
+            SetBrush("TextBrush", p.Text);
+            SetBrush("TextSecondaryBrush", p.TextSecondary);
+            SetBrush("InputBgBrush", p.InputBg);
+            SetBrush("InputBorderBrush", p.InputBorder);
+            SetBrush("HoverBrush", p.Hover);
+            SetBrush("PressedBrush", p.Pressed);
+            SetBrush("AccentBrush", p.Accent);
+            SetBrush("AccentHoverBrush", p.AccentHover);
+            SetBrush("PopupBgBrush", p.PopupBg);
+            SetBrush("PopupBorderBrush", p.PopupBorder);
+            SetBrush("ItemHoverBrush", p.ItemHover);
+            SetBrush("SeparatorBrush", p.Separator);
+            SetBrush("DisabledBrush", p.Disabled);
+        }
+
+        private void SetBrush(string key, Color c)
+        {
+            var b = new SolidColorBrush(c);
+            b.Freeze();
+            Resources[key] = b;
+        }
+
+        private Brush BrushOf(string key)
+        {
+            return TryFindResource(key) as Brush ?? Brushes.White;
+        }
+
+        /// <summary>底部提示与真实配置一致：联动开 → “西文自动联动 X”；关 → 如实说明。</summary>
+        private void RefreshHints()
+        {
+            try
+            {
+                var s = _controller.Settings;
+                TxtHint.Text = s.LatinLinkageEnabled
+                    ? "西文自动联动 " + s.DefaultLatinFont
+                    : "西文保持原样（联动已关）";
+            }
+            catch { }
         }
 
         private double _dpiScale = 0;
@@ -121,8 +173,12 @@ namespace TypeRight.Addin.UI
 
         public void ShowBar()
         {
+            try { ApplyTheme(OfficeTheme.Detect(_controller.App)); }
+            catch { ApplyTheme(OfficeThemeKind.Light); }
+            RefreshHints();
             if (_userMoved) EnsureOnScreen();  // 分辨率/显示器变化后防止停在屏外
             ResetTransientControls();
+            TryAttachToWordWindow();
             Show();
             Activate();
         }
@@ -130,6 +186,21 @@ namespace TypeRight.Addin.UI
         public void HideBar()
         {
             try { Hide(); } catch { }
+        }
+
+        /// <summary>归属 Word 活动窗口：随 Word 最小化/置底，不作为全局置顶遮挡其他程序。</summary>
+        private void TryAttachToWordWindow()
+        {
+            try
+            {
+                IntPtr hwnd = new IntPtr(_controller.App.ActiveWindow.Hwnd);
+                if (hwnd != IntPtr.Zero)
+                {
+                    var helper = new WindowInteropHelper(this);
+                    if (helper.Owner != hwnd) helper.Owner = hwnd;
+                }
+            }
+            catch { }
         }
 
         private void ResetTransientControls()
@@ -147,8 +218,20 @@ namespace TypeRight.Addin.UI
                 ChkIgnoreSize.IsEnabled = false;
                 ChkIgnoreColor.IsEnabled = false;
                 ChkIgnoreBold.IsEnabled = false;
+                SetColorStrip(null);
             }
             finally { _suppressEvents = false; }
+        }
+
+        private void SetColorStrip(int? rgb)
+        {
+            var strip = FindName("ColorStrip") as Border;
+            if (strip == null) return;
+            var c = rgb.HasValue ? Color.FromRgb((byte)(rgb.Value >> 16), (byte)(rgb.Value >> 8), (byte)rgb.Value)
+                                 : Color.FromRgb(0, 0, 0);
+            var b = new SolidColorBrush(c);
+            b.Freeze();
+            strip.Background = b;
         }
 
         // ---- 事件 ----
@@ -180,7 +263,7 @@ namespace TypeRight.Addin.UI
                 double monLeft = screen.Bounds.Left / scale, monTop = screen.Bounds.Top / scale;
                 double monRight = screen.Bounds.Right / scale, monBottom = screen.Bounds.Bottom / scale;
                 double w = ActualWidth > 0 ? ActualWidth : Width;
-                double h = ActualHeight > 0 ? ActualHeight : 120;
+                double h = ActualHeight > 0 ? ActualHeight : 140;
                 if (Left + w > monRight) Left = Math.Max(monLeft, monRight - w - 8);
                 if (Top + h > monBottom) Top = Math.Max(monTop, monBottom - h - 8);
                 if (Left < monLeft) Left = monLeft + 8;
@@ -226,29 +309,36 @@ namespace TypeRight.Addin.UI
                 new object[] { "深绿", "#2F855A" }, new object[] { "灰", "#595959" }
             };
 
-            var list = new ListBox { BorderThickness = new Thickness(0), Padding = new Thickness(2) };
+            // 调色板（主题化：面板底色/描边/悬停环）
+            Brush popupBg = BrushOf("PopupBgBrush"), popupBorder = BrushOf("PopupBorderBrush"),
+                 accent = BrushOf("AccentBrush"), panelBorder = BrushOf("PanelBorderBrush");
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
             foreach (var p in presets)
             {
-                var border = new Border
+                var swatch = new Border
                 {
                     Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString((string)p[1])),
-                    Width = 18, Height = 18, CornerRadius = new CornerRadius(4),
-                    Margin = new Thickness(3), Tag = p[1], Cursor = Cursors.Hand
+                    Width = 20, Height = 20, CornerRadius = new CornerRadius(3),
+                    Margin = new Thickness(3), BorderThickness = new Thickness(1),
+                    BorderBrush = panelBorder, Cursor = Cursors.Hand, ToolTip = (string)p[0]
                 };
-                border.MouseLeftButtonUp += OnPickColor;
-                list.Items.Add(border);
+                swatch.MouseEnter += (s, _) => { swatch.BorderBrush = accent; swatch.BorderThickness = new Thickness(2); };
+                swatch.MouseLeave += (s, _) => { swatch.BorderBrush = panelBorder; swatch.BorderThickness = new Thickness(1); };
+                swatch.MouseLeftButtonUp += OnPickColor;
+                row.Children.Add(swatch);
             }
 
             _colorPopup = new Popup
             {
                 Child = new Border
                 {
-                    Background = Brushes.White, CornerRadius = new CornerRadius(8),
-                    BorderBrush = new SolidColorBrush(Color.FromRgb(0xC9, 0xD2, 0xE3)),
-                    BorderThickness = new Thickness(1), Padding = new Thickness(6),
-                    Child = list
+                    Background = popupBg, CornerRadius = new CornerRadius(3),
+                    BorderBrush = popupBorder,
+                    BorderThickness = new Thickness(1), Padding = new Thickness(5),
+                    Child = row
                 },
-                PlacementTarget = BtnColor, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+                PlacementTarget = BtnColor, Placement = PlacementMode.Bottom,
                 StaysOpen = false, AllowsTransparency = true
             };
             _colorPopup.IsOpen = true;
@@ -257,10 +347,17 @@ namespace TypeRight.Addin.UI
         private void OnPickColor(object sender, MouseButtonEventArgs e)
         {
             var border = (Border)sender;
-            _colorPopup.IsOpen = false;
-            string hex = (string)border.Tag;
+            if (_colorPopup != null) _colorPopup.IsOpen = false;
+            string hex = (string)border.Tag ?? ColorToHex(border.Background as SolidColorBrush);
             int rgb = int.Parse(hex.Substring(1), System.Globalization.NumberStyles.HexNumber);
+            SetColorStrip(rgb);
             _controller.ApplyChanges(new FormatChanges { ColorRgb = rgb });
+        }
+
+        private static string ColorToHex(SolidColorBrush b)
+        {
+            if (b == null) return "#000000";
+            return "#" + b.Color.R.ToString("X2") + b.Color.G.ToString("X2") + b.Color.B.ToString("X2");
         }
 
         private void OnStrictChanged(object sender, RoutedEventArgs e)

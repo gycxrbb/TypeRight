@@ -67,6 +67,10 @@ namespace TypeRight.Acceptance
         public Document OpenCopy(string tag)
         {
             string target = Path.Combine(OutputDir, tag + ".docx");
+            // 清掉被杀 Word 残留的 ~$ 属主锁：隐藏 Word 打开带死锁的文件会弹
+            // "文件正在使用"且永不返回（曾把整套验收卡死在 TC-15）
+            string ownerLock = Path.Combine(OutputDir, "~$" + tag + ".docx");
+            try { if (File.Exists(ownerLock)) File.Delete(ownerLock); } catch { }
             File.Copy(OriginalDocx, target, true);
             return App.Documents.Open(target);
         }

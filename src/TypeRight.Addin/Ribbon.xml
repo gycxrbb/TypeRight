@@ -7,20 +7,30 @@
           <button id="btnSimilar" size="large" label="同类选择"
                   screentip="选中与当前段落格式相同的所有段落"
                   supertip="光标点进一个段落后点击：全文档同款格式的段落一起选中，&#10;在浮动条上选字体即可批量修改。&#10;右键菜单里也有同名命令。"
-                  imageMso="SelectSimilarFormats"
+                  getImage="OnGetImage"
                   onAction="OnSimilar" />
           <button id="btnFormulas" size="large" label="公式转换"
                   screentip="全文纯文本公式 → Word 公式对象"
                   supertip="ax²+bx+c=0 这类文本公式批量转为可编辑公式对象，&#10;失败片段原样保留。"
-                  imageMso="AutoSum"
+                  getImage="OnGetImage"
                   onAction="OnFormulas" />
         </group>
         <group id="grpProfile" label="方案">
-          <button id="btnProfiles" size="large" label="方案"
-                  screentip="存为方案 / 应用 / 管理"
-                  supertip="把这次的批量操作存成方案，下一份同类文档一键完成。"
-                  imageMso="FileSaveAs"
-                  onAction="OnProfiles" />
+          <menu id="mnuProfiles" size="large" label="方案"
+                screentip="存为方案 / 应用 / 管理"
+                supertip="把这次的批量操作存成方案，下一份同类文档一键完成；&#10;或在方案列表中应用、重命名、删除。"
+                getImage="OnGetImage">
+            <button id="btnProfileSave" label="存为方案…"
+                    screentip="把本次会话的批量操作录制成方案"
+                    supertip="对同类段落改过 2 次以上格式后，可把整套操作存为方案。"
+                    getImage="OnGetImage"
+                    onAction="OnProfilesSave" />
+            <button id="btnProfileManage" label="应用 / 管理方案…"
+                    screentip="方案列表：应用、重命名、删除、导入导出"
+                    supertip="在当前文档上一键回放已保存的方案。"
+                    getImage="OnGetImage"
+                    onAction="OnProfilesManage" />
+          </menu>
         </group>
       </tab>
     </tabs>
@@ -28,7 +38,7 @@
   <contextMenus>
     <contextMenu idMso="ContextMenuText">
       <button id="ctxSimilar" label="同类选择" onAction="OnSimilar"
-              insertBeforeMso="Cut" imageMso="SelectSimilarFormats" />
+              insertBeforeMso="Cut" getImage="OnGetImage" />
     </contextMenu>
   </contextMenus>
 </customUI>

@@ -459,8 +459,35 @@ namespace TypeRight.Addin.Controllers
                 _floatBar = new FloatBar(this);
                 _floatBar.SetFonts(FontListProvider.GetFontList());
             }
+            _addin.RefreshRibbonTheme();   // 宿主主题变化 → 刷新功能区图标配色
             _floatBar.PositionNear(App, sample);
             _floatBar.ShowBar();
+        }
+
+        /// <summary>自动化验证：ShowActivated=false 重显悬浮条（后台无前台权时不触发失焦隐藏）。</summary>
+        public void ShowFloatBarForAutomation()
+        {
+            if (_floatBar == null) return;
+            _floatBar.ShowActivated = false;
+            _floatBar.ShowBar();
+        }
+
+        /// <summary>自动化验证：强制悬浮条主题（"dark"/"darkgray"/"light"，其他=自动检测）。仅 UI 显示，不触碰文档。</summary>
+        public void ForceFloatBarTheme(string theme)
+        {
+            if (_floatBar == null) return;
+            OfficeThemeKind kind;
+            switch ((theme ?? "").Trim().ToLowerInvariant())
+            {
+                case "dark": kind = OfficeThemeKind.Dark; break;
+                case "darkgray": kind = OfficeThemeKind.DarkGray; break;
+                case "light": kind = OfficeThemeKind.Light; break;
+                default: kind = OfficeTheme.Detect(App); break;
+            }
+            // 主题只动 UI 资源；调用线程未知时经浮条自身 Dispatcher 封送
+            var bar = _floatBar;
+            if (bar.Dispatcher.CheckAccess()) bar.ApplyTheme(kind);
+            else bar.Dispatcher.BeginInvoke(new Action(() => bar.ApplyTheme(kind)));
         }
 
         public void ShowToast(string message, int durationMs = 5000)
