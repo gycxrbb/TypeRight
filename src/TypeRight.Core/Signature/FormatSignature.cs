@@ -163,6 +163,28 @@ namespace TypeRight.Signature
             }
         }
 
+        /// <summary>首锚部分匹配（引导句候选预筛）：仅比首锚的字体/字号/加粗/颜色。</summary>
+        public bool FirstAnchorMatches(FormatSignature other, IgnoreDims ignore)
+        {
+            if (!FontEquals(EastAsiaFont, other.EastAsiaFont)) return false;
+            if (!FontEquals(LatinFont, other.LatinFont)) return false;
+            if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
+            if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(BoldRaw, other.BoldRaw)) return false;
+            if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(ColorRgb, other.ColorRgb)) return false;
+            return true;
+        }
+
+        /// <summary>尾锚部分匹配（正文候选预筛）：仅比尾锚的字体/字号/加粗/颜色。</summary>
+        public bool LastAnchorMatches(FormatSignature other, IgnoreDims ignore)
+        {
+            if (!FontEquals(LastEastAsiaFont, other.LastEastAsiaFont)) return false;
+            if (!FontEquals(LastLatinFont, other.LastLatinFont)) return false;
+            if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(LastSizePt, other.LastSizePt)) return false;
+            if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(LastBoldRaw, other.LastBoldRaw)) return false;
+            if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(LastColorRgb, other.LastColorRgb)) return false;
+            return true;
+        }
+
         // ---- 宽松模式 ----
 
         [Flags]
@@ -219,6 +241,87 @@ namespace TypeRight.Signature
 
         private static long Now() { return System.Diagnostics.Stopwatch.GetTimestamp(); }
         private static long Delta(long start) { return Now() - start; }
+
+        /// <summary>任意子区间（引导句/正文单元）的签名：锚点在区间内的首/末可见字符与中段采样。
+        /// 与段落级 Read 同一套锚点语义，供"引导句感知"单元匹配使用。</summary>
+        public static FormatSignature ReadRange(Range range)
+        {
+            if (range == null) return EmptySig();
+            try
+            {
+                string text = range.Text ?? "";
+                int basePos = range.Start;
+                int firstIdx = FirstVisibleIndex(text, 0);
+                if (firstIdx < 0) return EmptySig();
+                int lastIdx = LastVisibleIndex(text);
+                if (lastIdx <= firstIdx) lastIdx = firstIdx;
+
+                var sig = new FormatSignature
+                {
+                    SizePt = double.NaN, ColorRgb = -1,
+                    LastSizePt = double.NaN, LastBoldRaw = WordFormatUtils.UndefinedInt, LastColorRgb = -1,
+                    Alignment = "l"
+                };
+                Document doc = range.Document;
+
+                // 首锚
+                FormatSignature.AnchorExtra a = ReadAnchor(doc.Range(basePos + firstIdx, basePos + firstIdx + 1), compareFonts: true);
+                sig.EastAsiaFont = a.Ea; sig.LatinFont = a.Latin;
+                sig.SizePt = a.Size; sig.BoldRaw = a.Bold; sig.ColorRgb = a.Color;
+                sig.ItalicRaw = 0;
+
+                // 尾锚
+                if (lastIdx == firstIdx)
+                {
+                    sig.LastEastAsiaFont = sig.EastAsiaFont; sig.LastLatinFont = sig.LatinFont;
+                    sig.LastSizePt = sig.SizePt; sig.LastBoldRaw = sig.BoldRaw; sig.LastColorRgb = sig.ColorRgb;
+                }
+                else
+                {
+                    FormatSignature.AnchorExtra la = ReadAnchor(doc.Range(basePos + lastIdx, basePos + lastIdx + 1), compareFonts: true);
+                    sig.LastEastAsiaFont = la.Ea; sig.LastLatinFont = la.Latin;
+                    sig.LastSizePt = la.Size; sig.LastBoldRaw = la.Bold; sig.LastColorRgb = la.Color;
+                }
+
+                // 中段 25/50/75%
+                var extras = new FormatSignature.AnchorExtra[3];
+                for (int k = 0; k < 3; k++)
+                {
+                    int idx = firstIdx + (int)Math.Round((lastIdx - firstIdx) * 0.25 * (k + 1));
+                    int guard = 0;
+                    while (idx < lastIdx && guard++ < 4 && IsSkippable(text, idx)) idx++;
+                    if (idx <= firstIdx || idx >= lastIdx)
+                        extras[k] = FirstAnchorOf(sig);
+                    else
+                        extras[k] = ReadAnchor(doc.Range(basePos + idx, basePos + idx + 1), compareFonts: false);
+                }
+                sig.ExtraAnchors = extras;
+                return sig;
+            }
+            catch { return EmptySig(); }
+        }
+
+        internal static bool IsSkippable(string text, int idx)
+        {
+            if (idx < 0 || idx >= text.Length) return true;
+            char ch = text[idx];
+            return ch == '\r' || ch == '\a' || ch == '\v' || ch == ' ' || ch == '　' || ch == '\t';
+        }
+
+        internal static int FirstVisibleIndex(string text, int from)
+        {
+            for (int i = from; i < text.Length; i++)
+                if (!IsSkippable(text, i)) return i;
+            return -1;
+        }
+
+        internal static int LastVisibleIndex(string text)
+        {
+            for (int i = text.Length - 1; i >= 0; i--)
+                if (!IsSkippable(text, i)) return i;
+            return -1;
+        }
+
         /// <summary>
         /// 提取段落签名。快路径：段落区间整体读（均匀段落 = 首个非空 run 的有效值，典型文档占绝大多数）；
         /// 出现混合哨兵（wdUndefined）时降级为“首个非空字符”逐点探测。空段返回 IsEmpty 签名。
@@ -289,8 +392,8 @@ namespace TypeRight.Signature
             {
                 long t3 = Now();
                 Font f = probe.Font;
-                sig.EastAsiaFont = ReadFontStable(() => f.NameFarEast);
-                sig.LatinFont = ReadFontStable(() => f.NameAscii);
+                sig.EastAsiaFont = NormalizeFont(f.NameFarEast);   // 首锚经 Duplicate 路径读取，实测稳定，单读
+                sig.LatinFont = NormalizeFont(f.NameAscii);
                 sig.SizePt = ReadSizeStable(f);
                 sig.BoldRaw = ReadBoldStable(f);
                 sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic);
@@ -395,8 +498,8 @@ namespace TypeRight.Signature
             };
         }
 
-        /// <summary>字体名读取抖动（同字符多次读取返回不同名）：读两次一致即取；
-        /// 不一致读第三次取多数。首/尾锚（参与字体比较）使用。</summary>
+        /// <summary>字体名读取抖动（同字符多次读取返回不同名，多见于绝对区间探测的尾锚）：
+        /// 读两次一致即取；不一致读第三次取多数。仅用于参与字体比较的尾锚。</summary>
         private static string ReadFontStable(Func<string> read)
         {
             string a = read();

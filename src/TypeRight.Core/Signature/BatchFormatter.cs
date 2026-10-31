@@ -248,5 +248,128 @@ namespace TypeRight.Signature
             }
             return result;
         }
+
+        /// <summary>任意区间内数学区之外的文本子区间（单元=引导句/正文的区间版）。</summary>
+        private static List<Range> TextRangesExcludingMath(Document doc, int from, int to)
+        {
+            var result = new List<Range>();
+            Range whole = doc.Range(from, to);
+            int mathCount = 0;
+            try { mathCount = whole.OMaths.Count; } catch { }
+            if (mathCount == 0)
+            {
+                result.Add(whole);
+                return result;
+            }
+            var bounds = new List<KeyValuePair<int, int>>();
+            for (int i = 1; i <= mathCount; i++)
+            {
+                try { Range mr = whole.OMaths[i].Range; bounds.Add(new KeyValuePair<int, int>(mr.Start, mr.End)); }
+                catch { }
+            }
+            bounds.Sort((a, b) => a.Key.CompareTo(b.Key));
+            int start = from;
+            foreach (var b in bounds)
+            {
+                if (b.Key > start)
+                {
+                    Range gap = doc.Range(start, b.Key);
+                    if (HasVisibleText(gap)) result.Add(gap);
+                }
+                if (b.Value > start) start = b.Value;
+            }
+            if (to > start)
+            {
+                Range tail = doc.Range(start, to);
+                if (HasVisibleText(tail)) result.Add(tail);
+            }
+            return result;
+        }
+
+        /// <summary>引导句感知：把格式改动应用到命中单元区间（只动引导句或只动正文，
+        /// 不再整段写入）。与 Apply 同一套幂等写入/字号护栏/撤销语义。</summary>
+        public static BatchStats ApplyUnits(Application app, Document doc, IList<MatchUnit> units, FormatChanges changes,
+            string undoName, bool wrapUndo = true)
+        {
+            if (changes == null || !changes.HasAny)
+                return new BatchStats { Total = units == null ? 0 : units.Count, Changed = 0 };
+
+            var stats = new BatchStats { Total = units == null ? 0 : units.Count, UndoName = undoName ?? "TypeRight 批量格式" };
+
+            bool screenOff = false;
+            try { app.ScreenUpdating = false; screenOff = true; } catch { }
+
+            UndoRecord undo = null;
+            if (wrapUndo)
+            {
+                undo = app.UndoRecord;
+                undo.StartCustomRecord(stats.UndoName);
+            }
+            try
+            {
+                foreach (MatchUnit u in units)
+                {
+                    try
+                    {
+                        if (ApplyToRanges(TextRangesExcludingMath(doc, u.Start, u.End), changes)) stats.Changed++;
+                    }
+                    catch { /* 单元失败跳过，不中断批次 */ }
+                }
+            }
+            finally
+            {
+                if (undo != null) { try { undo.EndCustomRecord(); } catch { } }
+                if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
+            }
+            return stats;
+        }
+
+        private static bool ApplyToRanges(List<Range> ranges, FormatChanges c)
+        {
+            bool changed = false;
+            foreach (Range r in ranges)
+            {
+                try
+                {
+                    if (ApplyToRange(r, c)) changed = true;
+                }
+                catch { }
+            }
+            return changed;
+        }
+
+        private static bool ApplyToRange(Range r, FormatChanges c)
+        {
+            Font f = null;
+            try { f = r.Font; } catch { }
+            if (f == null) return false;
+            bool changed = false;
+
+            string beforeFE = SafeFontName(f.NameFarEast);
+            string beforeAscii = SafeFontName(f.NameAscii);
+            float beforeSize = SafeSize(f.Size);
+            bool guardSize = beforeSize > 0 && beforeSize < WordFormatUtils.UndefinedFloat;
+
+            if (c.EastAsiaFont != null)
+                changed |= WordFormatUtils.SetIfChanged(() => f.NameFarEast, v => f.NameFarEast = v, c.EastAsiaFont);
+            if (c.LatinFont != null)
+            {
+                changed |= WordFormatUtils.SetIfChanged(() => f.NameAscii, v => f.NameAscii = v, c.LatinFont);
+                changed |= WordFormatUtils.SetIfChanged(() => f.NameOther, v => f.NameOther = v, c.LatinFont);
+            }
+            if (c.SizePt.HasValue)
+                changed |= WordFormatUtils.SetIfChanged(() => f.Size, v => f.Size = v, (float)c.SizePt.Value, WordFormatUtils.FloatEq);
+            if (c.Bold.HasValue)
+                changed |= WordFormatUtils.SetIfChanged(() => f.Bold, v => f.Bold = v, c.Bold.Value ? -1 : 0, WordFormatUtils.IntEq);
+            if (c.ColorRgb.HasValue)
+                changed |= WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
+                    (WdColor)WordFormatUtils.RgbToWdColor(c.ColorRgb.Value), (a, b) => a == b);
+
+            if (guardSize)
+            {
+                try { f.Size = beforeSize; } catch { }
+            }
+            return changed;
+        }
     }
 }

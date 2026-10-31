@@ -60,10 +60,13 @@ namespace TypeRight.Addin.UI
             finally { _suppressEvents = false; }
         }
 
-        public void UpdateMatched(int count, TimeSpan duration)
+        public void UpdateMatched(int count, TimeSpan duration, bool isLead = false)
         {
             // 耗时仅进日志（设计稿要求 UI 不显示调试数据）
-            TxtCount.Text = count <= 1 ? "仅当前段落" : "已匹配 " + count + " 段";
+            if (isLead)
+                TxtCount.Text = count <= 1 ? "仅当前引导句" : "已匹配 " + count + " 处引导句";
+            else
+                TxtCount.Text = count <= 1 ? "仅当前段落" : "已匹配 " + count + " 处";
         }
 
         /// <summary>定位：优先出现在选中文本/样本段首个可见字符的右下方（鼠标附近）；

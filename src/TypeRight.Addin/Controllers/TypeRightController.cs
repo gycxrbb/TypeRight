@@ -17,15 +17,17 @@ namespace TypeRight.Addin.Controllers
         public Document Doc;
         public string DocFullName;
         public Paragraph SampleParagraph;
+        /// <summary>光标在样本段内的偏移（引导句感知：决定样本单元是引导句还是正文）。</summary>
+        public int SampleOffset;
         /// <summary>样本段落的原始签名（应用格式前采集，方案规则用它匹配）。</summary>
         public FormatSignature SampleSignature;
+        /// <summary>样本是否引导句单元。</summary>
+        public bool SampleIsLead;
         /// <summary>样本段落是否在表格内（正文/表格分区，按表格区间位置判定）。</summary>
         public bool SampleInTable;
-        /// <summary>最近一次匹配计数/耗时（浮条首显即用真值，不等下一次重算）。</summary>
-        public int LastMatchCount;
-        public TimeSpan LastMatchDuration;
         public FormatSignature.IgnoreDims Ignore;
-        public List<Paragraph> Matched = new List<Paragraph>();
+        /// <summary>命中单元（引导句感知）：高亮与格式应用都作用于单元区间。</summary>
+        public List<MatchUnit> MatchedUnits = new List<MatchUnit>();
         public SimilarSelector.HighlightSession Highlights;
     }
 
@@ -52,6 +54,8 @@ namespace TypeRight.Addin.Controllers
         private FormulaFailuresWindow _failuresWindow;
 
         private readonly List<OpRecord> _docOps = new List<OpRecord>();
+        private int _lastMatchCount;
+        private TimeSpan _lastMatchDuration = TimeSpan.Zero;
         private string _opsDocFullName;
         private bool _saveOffered;
 
@@ -100,11 +104,15 @@ namespace TypeRight.Addin.Controllers
 
                 CloseSession();
 
+                int sampleOffset = 0;
+                try { sampleOffset = Math.Max(0, App.Selection.Range.Start - sample.Range.Start); } catch { }
+
                 _session = new SelectSession
                 {
                     Doc = doc,
                     DocFullName = SafeFullName(doc),
                     SampleParagraph = sample,
+                    SampleOffset = sampleOffset,
                     SampleSignature = sig,
                     SampleInTable = SimilarSelector.IsInTable(doc, sample),
                     Ignore = _settings.StrictByDefault ? FormatSignature.IgnoreDims.None : FormatSignature.IgnoreDims.None,
@@ -128,14 +136,22 @@ namespace TypeRight.Addin.Controllers
             }
         }
 
-        /// <summary>按当前忽略维度重算命中集并刷新高亮/计数。</summary>
+        /// <summary>按当前忽略维度重算命中单元集并刷新高亮/计数（引导句感知）。</summary>
         private void RecomputeMatches()
         {
             if (_session == null) return;
-            var result = SimilarSelector.Match(_session.Doc, _session.SampleSignature, _session.Ignore, _session.SampleInTable);
+            var result = SimilarSelector.MatchUnits(_session.Doc, _session.SampleParagraph, _session.SampleOffset, _session.Ignore);
+            _session.MatchedUnits = result.Units;
+            if (!result.SampleSignature.IsEmpty) _session.SampleSignature = result.SampleSignature;
+            _session.SampleIsLead = result.SampleIsLead;
+
+            TypeRightAddin.Log(string.Format("同类匹配: {0} 处 / {1}ms（进程内） ignore={2} 样本单元={3}",
+                result.Count, result.Duration.TotalMilliseconds.ToString("0"), _session.Ignore,
+                result.SampleIsLead ? "引导句" : "段落/正文"));
+
             if (result.Count == 0)
             {
-                // 样本段自身必然命中（同签名同分区），0 命中=异常：记录首几段状态便于现场诊断
+                // 样本单元自身必然命中，0 命中=异常：记录首几段状态便于现场诊断
                 try
                 {
                     int diag = 0;
@@ -144,21 +160,12 @@ namespace TypeRight.Addin.Controllers
                         if (diag >= 6) break;
                         FormatSignature ds = FormatSignatureReader.Read(dp);
                         if (ds.IsEmpty) continue;
-                        TypeRightAddin.Log("  [0命中诊断] 段" + diag + " sig=" + ds +
-                            " 匹配=" + ds.Matches(_session.SampleSignature, _session.Ignore));
+                        TypeRightAddin.Log("  [0命中诊断] 段" + diag + " sig=" + ds);
                         diag++;
                     }
                 }
                 catch { }
             }
-            _session.Matched = result.Paragraphs;
-            long ticksPerMs = System.Diagnostics.Stopwatch.Frequency / 1000;
-            TypeRightAddin.Log(string.Format(
-                "同类匹配: {0} 段 / {1}ms（进程内） ignore={2} | 分解: 枚举{3}ms 区间{4}ms 文本{5}ms 探针{6}ms 字体{7}ms 对齐{8}ms",
-                result.Count, result.Duration.TotalMilliseconds.ToString("0"), _session.Ignore,
-                FormatSignatureReader.TicksEnumerator / ticksPerMs, FormatSignatureReader.TicksRange / ticksPerMs,
-                FormatSignatureReader.TicksText / ticksPerMs, FormatSignatureReader.TicksProbe / ticksPerMs,
-                FormatSignatureReader.TicksFont / ticksPerMs, FormatSignatureReader.TicksAlign / ticksPerMs));
 
             // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈；批量写期间关屏幕刷新防闪烁卡顿
             try
@@ -167,7 +174,7 @@ namespace TypeRight.Addin.Controllers
                 undo.StartCustomRecord("TypeRight 匹配标记");
                 bool screenOff = false;
                 try { App.ScreenUpdating = false; screenOff = true; } catch { }
-                try { _session.Highlights.Apply(result); }
+                try { _session.Highlights.ApplyUnits(result); }
                 finally
                 {
                     undo.EndCustomRecord();
@@ -176,20 +183,20 @@ namespace TypeRight.Addin.Controllers
             }
             catch { }
 
-            _session.LastMatchCount = result.Count;
-            _session.LastMatchDuration = result.Duration;
+            _lastMatchCount = result.Count;
+            _lastMatchDuration = result.Duration;
             if (_floatBar != null)
-                _floatBar.UpdateMatched(result.Count, result.Duration);
+                _floatBar.UpdateMatched(result.Count, result.Duration, result.SampleIsLead);
 
-            // 命中摘要：现场诊断"为什么被判同类"（样本签名 + 命中段签名对比）
+            // 命中摘要：现场诊断"为什么被判同类"（样本签名 + 命中单元签名对比）
             try
             {
                 var summary = new System.Text.StringBuilder();
-                for (int i = 0; i < Math.Min(6, result.Paragraphs.Count); i++)
+                for (int i = 0; i < Math.Min(6, result.Units.Count); i++)
                 {
-                    try { summary.Append(" | ").Append(FormatSignatureReader.Read(result.Paragraphs[i])); } catch { }
+                    try { summary.Append(" | ").Append(result.Units[i].Signature); } catch { }
                 }
-                TypeRightAddin.Log("  [命中摘要] sample=" + _session.SampleSignature + summary);
+                TypeRightAddin.Log("  [命中摘要] sample=" + result.SampleSignature + summary);
             }
             catch { }
         }
@@ -213,8 +220,8 @@ namespace TypeRight.Addin.Controllers
 
             try
             {
-                var stats = BatchFormatter.Apply(App, _session.Doc, _session.Matched, changes,
-                    "同类格式（" + _session.Matched.Count + " 段）");
+                var stats = BatchFormatter.ApplyUnits(App, _session.Doc, _session.MatchedUnits, changes,
+                    "同类格式（" + _session.MatchedUnits.Count + " 处）");
 
                 _docOps.Add(new OpRecord
                 {
@@ -222,7 +229,7 @@ namespace TypeRight.Addin.Controllers
                     Ignore = _session.Ignore,
                     Applied = changes
                 });
-                TypeRightAddin.Log("ApplyChanges: " + _session.Matched.Count + " 段，实际改动 " + stats.Changed);
+                TypeRightAddin.Log("ApplyChanges: " + _session.MatchedUnits.Count + " 处，实际改动 " + stats.Changed);
             }
             catch (Exception ex)
             {
@@ -287,11 +294,11 @@ namespace TypeRight.Addin.Controllers
                 catch { }
                 if (p == null) return;
                 int start = p.Range.Start;
-                foreach (Paragraph m in _session.Matched)
+                foreach (MatchUnit u in _session.MatchedUnits)
                 {
                     try
                     {
-                        if (m.Range.Start == start) return; // 仍在命中集内
+                        if (u.Paragraph.Range.Start == start) return; // 仍在命中段内
                     }
                     catch { }
                 }
@@ -521,7 +528,7 @@ namespace TypeRight.Addin.Controllers
             _floatBar.ShowBar();
             // 首次会话浮条是刚创建的（RecomputeMatches 时还不存在），用会话里的真值补刷计数
             if (_session != null)
-                _floatBar.UpdateMatched(_session.LastMatchCount, _session.LastMatchDuration);
+                _floatBar.UpdateMatched(_lastMatchCount, _lastMatchDuration, _session != null && _session.SampleIsLead);
         }
 
         /// <summary>空闲时预建浮条（隐藏）：把 WPF 窗口初始化 + 字体列表装载

@@ -19,6 +19,29 @@ namespace TypeRight.Signature
         public int Count { get { return Paragraphs.Count; } }
     }
 
+    /// <summary>匹配单元（引导句感知）：段内一个连续区间——均匀段=整段；
+    /// 混合段拆为"引导句（行首格式异于后续的首个连续区）+正文"两个单元。
+    /// ★ 导读框即此类：行首"★ 标题句"加粗蓝 + 后续宋体正文同处一段。</summary>
+    public sealed class MatchUnit
+    {
+        public Paragraph Paragraph;
+        /// <summary>单元区间 [Start, End)（文档坐标，不含段落/单元格标记）。</summary>
+        public int Start, End;
+        /// <summary>是否引导句单元。</summary>
+        public bool IsLead;
+        public FormatSignature Signature;
+    }
+
+    /// <summary>单元匹配结果。</summary>
+    public sealed class UnitMatchResult
+    {
+        public List<MatchUnit> Units = new List<MatchUnit>();
+        public FormatSignature SampleSignature;
+        public bool SampleIsLead;
+        public TimeSpan Duration;
+        public int Count { get { return Units.Count; } }
+    }
+
     /// <summary>
     /// 同类段落匹配（PRD v2 P0-1）：全文段落 + 表格单元格内段落，按签名比对。
     /// 分区规则（黄金文件取证）：正文样本只匹配正文段落，表格样本只匹配表格内段落——
@@ -71,6 +94,144 @@ namespace TypeRight.Signature
         {
             try { return IsInTable(TableRanges(doc), paragraph.Range.Start); }
             catch { return false; }
+        }
+
+        // ───────── 引导句感知单元匹配（方案1） ─────────
+
+        /// <summary>检测段内引导句边界：引导句 = 行首与首锚格式（字号/加粗/颜色）一致的
+        /// 最长前缀。均匀段返回 -1。字体不参与边界判定（Font.Name* 读取抖动）。</summary>
+        public static int DetectLeadBoundary(Paragraph p, FormatSignature paraSig)
+        {
+            if (paraSig.IsUniform) return -1;
+            try
+            {
+                Range whole = p.Range;
+                int paraStart = whole.Start;
+                string text = whole.Text ?? "";
+                int firstIdx = FormatSignatureReader.FirstVisibleIndex(text, 0);
+                int lastIdx = FormatSignatureReader.LastVisibleIndex(text);
+                if (firstIdx < 0 || lastIdx <= firstIdx) return -1;
+
+                // 二分找首个"非引导格式"的可见字符（引导区为连续前缀）
+                int lo = firstIdx, hi = lastIdx;   // 不变量：idx<=lo 为引导格式；idx>=hi 非引导
+                Document doc = whole.Document;
+                int iters = 0;
+                while (hi - lo > 1)
+                {
+                    if (++iters > 40) break;   // 保险丝（二分 ~log2 应 <10）
+                    int mid = lo + (hi - lo) / 2;
+                    int probe = mid, guard = 0;
+                    while (probe < lastIdx && guard++ < 4 && FormatSignatureReader.IsSkippable(text, probe)) probe++;
+                    if (probe >= lastIdx) { hi = lastIdx; break; }
+                    if (CharMatchesLead(doc, paraStart + probe, paraSig)) lo = probe;
+                    else hi = probe;
+                }
+                if (hi >= lastIdx) return -1;   // 全段皆引导格式（视作均匀）
+                return paraStart + hi;
+            }
+            catch { return -1; }
+        }
+
+        private static bool CharMatchesLead(Document doc, int pos, FormatSignature lead)
+        {
+            try
+            {
+                Font f = doc.Range(pos, pos + 1).Font;
+                double size = WordFormatUtils.NormalizeSize(f.Size);
+                if (!double.IsNaN(size) && !double.IsNaN(lead.SizePt) && Math.Abs(size - lead.SizePt) >= 0.01) return false;
+                int bold = f.Bold == -1 || f.Bold == 0 ? f.Bold : WordFormatUtils.UndefinedInt;
+                if (lead.BoldRaw != WordFormatUtils.UndefinedInt && bold != WordFormatUtils.UndefinedInt && bold != lead.BoldRaw) return false;
+                int color = WordFormatUtils.WdColorToRgb((int)f.Color);
+                if (lead.ColorRgb >= 0 && color >= 0 && color != lead.ColorRgb) return false;
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>引导句感知全文匹配：sampleOffset = 光标在样本段内的字符偏移，
+        /// 决定样本单元是引导句还是正文。均匀段落单元=整段（行为与段落级匹配一致）。</summary>
+        public static UnitMatchResult MatchUnits(Document doc, Paragraph sampleParagraph, int sampleOffset,
+            FormatSignature.IgnoreDims ignore)
+        {
+            var watch = Stopwatch.StartNew();
+            var result = new UnitMatchResult();
+            if (doc == null || sampleParagraph == null) return result;
+
+            bool sampleInTable = IsInTable(doc, sampleParagraph);
+
+            // 样本单元与签名
+            FormatSignature sampleParaSig = FormatSignatureReader.Read(sampleParagraph);
+            if (sampleParaSig.IsEmpty) return result;
+            int leadBoundary = DetectLeadBoundary(sampleParagraph, sampleParaSig);
+            int paraStart = sampleParagraph.Range.Start;
+            bool sampleIsLead = leadBoundary >= 0 && sampleOffset >= 0 && sampleOffset < leadBoundary - paraStart;
+            result.SampleIsLead = sampleIsLead;
+
+            Range sampleUnitRange = UnitRange(doc, sampleParagraph, leadBoundary, sampleIsLead);
+            FormatSignature sampleSig = FormatSignatureReader.ReadRange(sampleUnitRange);
+            if (sampleSig.IsEmpty) return result;
+            result.SampleSignature = sampleSig;
+
+            List<int[]> tableRanges = TableRanges(doc);
+            foreach (Paragraph p in doc.Paragraphs)
+            {
+                int pStart;
+                try { pStart = p.Range.Start; } catch { continue; }
+                if (IsInTable(tableRanges, pStart) != sampleInTable) continue;
+
+                FormatSignature sig = FormatSignatureReader.Read(p);
+                if (sig.IsEmpty) continue;
+
+                if (sig.IsUniform)
+                {
+                    // 均匀段：单单元=整段；签名即段签名
+                    if (sig.Matches(sampleSig, ignore))
+                        result.Units.Add(new MatchUnit { Paragraph = p, Start = pStart, End = p.Range.End, IsLead = false, Signature = sig });
+                    continue;
+                }
+
+                // 混合段：锚点预筛（引导句候选=首锚匹配；正文候选=尾锚匹配），
+                // 两头都不匹配的段直接跳过——避免对全文混合段做昂贵的边界二分+双区间签名
+                bool leadPossible = sig.FirstAnchorMatches(sampleSig, ignore);
+                bool bodyPossible = sig.LastAnchorMatches(sampleSig, ignore);
+                if (!leadPossible && !bodyPossible) continue;
+
+                int boundary = DetectLeadBoundary(p, sig);
+                if (boundary < 0)
+                {
+                    // 拆不出引导句（如全段皆首锚格式）：按整段处理
+                    if (sig.Matches(sampleSig, ignore))
+                        result.Units.Add(new MatchUnit { Paragraph = p, Start = pStart, End = p.Range.End, IsLead = false, Signature = sig });
+                    continue;
+                }
+                if (leadPossible)
+                {
+                    FormatSignature leadSig = FormatSignatureReader.ReadRange(doc.Range(pStart, boundary));
+                    if (!leadSig.IsEmpty && leadSig.Matches(sampleSig, ignore))
+                        result.Units.Add(new MatchUnit { Paragraph = p, Start = pStart, End = boundary, IsLead = true, Signature = leadSig });
+                }
+                if (bodyPossible)
+                {
+                    FormatSignature bodySig = FormatSignatureReader.ReadRange(doc.Range(boundary, p.Range.End));
+                    if (!bodySig.IsEmpty && bodySig.Matches(sampleSig, ignore))
+                        result.Units.Add(new MatchUnit { Paragraph = p, Start = boundary, End = p.Range.End, IsLead = false, Signature = bodySig });
+                }
+            }
+
+            watch.Stop();
+            result.Duration = watch.Elapsed;
+            return result;
+        }
+
+        private static Range UnitRange(Document doc, Paragraph p, int leadBoundary, bool isLead)
+        {
+            int start = p.Range.Start, end = p.Range.End;
+            if (leadBoundary >= 0)
+            {
+                if (isLead) end = leadBoundary;
+                else start = leadBoundary;
+            }
+            return doc.Range(start, end);
         }
 
         /// <summary>样本签名 → 全文匹配（分区：sampleInTable 决定命中文本域）。</summary>
@@ -132,6 +293,31 @@ namespace TypeRight.Signature
                     try
                     {
                         Range r = p.Range;
+                        WdColorIndex original = r.HighlightColorIndex;
+                        if (original == WdColorIndex.wdNoHighlight)
+                        {
+                            r.HighlightColorIndex = WdColorIndex.wdYellow;
+                            TouchedStarts.Add(r.Start);
+                            TouchedEnds.Add(r.End);
+                            applied++;
+                        }
+                    }
+                    catch { }
+                }
+                return applied;
+            }
+
+            /// <summary>把命中单元区间标记为黄色（引导句感知：只标引导句或只标正文）。</summary>
+            public int ApplyUnits(UnitMatchResult match)
+            {
+                Clear();
+                if (match == null) return 0;
+                int applied = 0;
+                foreach (MatchUnit u in match.Units)
+                {
+                    try
+                    {
+                        Range r = _doc.Range(u.Start, u.End);
                         WdColorIndex original = r.HighlightColorIndex;
                         if (original == WdColorIndex.wdNoHighlight)
                         {
