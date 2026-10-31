@@ -20,6 +20,10 @@ namespace TypeRight.Signature
         public int ColorRgb;          // -1 = 自动/混合；0xRRGGBB
         public string Alignment;      // "l"/"c"/"r"/"j"/"?"
 
+        /// <summary>ColorRgb 的"混合"标记（段内颜色不一致）。区别于 -1（自动/未知）：
+        /// 两个 -1 视为相等（同为自动色），混合标记不与任何值相等。</summary>
+        public const int ColorMixed = -2;
+
         public bool Bold { get { return BoldRaw == -1; } }
         public bool BoldMixed { get { return BoldRaw == WordFormatUtils.UndefinedInt; } }
         public bool Italic { get { return ItalicRaw == -1; } }
@@ -31,12 +35,13 @@ namespace TypeRight.Signature
 
         public override string ToString()
         {
-            return string.Format("{0}/{1} {2}pt B={3} I={4} #{5:X6} {6}",
+            string colorKey = ColorRgb == ColorMixed ? "混合" : (ColorRgb < 0 ? "自动" : ColorRgb.ToString("X6"));
+            return string.Format("{0}/{1} {2}pt B={3} I={4} #{5} {6}",
                 EastAsiaFont ?? "?", LatinFont ?? "?",
                 double.IsNaN(SizePt) ? "?" : SizePt.ToString("0.#"),
                 BoldMixed ? "?" : (Bold ? 1 : 0),
-                ColorRgb < 0 ? -1 : ColorRgb,
-                ColorRgb < 0 ? 0 : ColorRgb,
+                ItalicRaw,
+                colorKey,
                 Alignment);
         }
 
@@ -46,7 +51,14 @@ namespace TypeRight.Signature
                 && string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)
                 && SizePtEquals(SizePt, other.SizePt)
                 && BoldEquals(this, other)
-                && ColorRgb == other.ColorRgb;
+                && ColorEquals(ColorRgb, other.ColorRgb);
+        }
+
+        /// <summary>颜色相等：混合标记（ColorMixed）不与任何值相等；两个 -1（自动）相等。</summary>
+        private static bool ColorEquals(int a, int b)
+        {
+            if (a == ColorMixed || b == ColorMixed) return false;
+            return a == b;
         }
 
         // Word 的 Font.Bold/Italic 会返回非标准杂值（实测混入颜色字节，如 1717853）。
@@ -114,7 +126,7 @@ namespace TypeRight.Signature
             if (!string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
             if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(this, other)) return false;
-            if ((ignore & IgnoreDims.Color) == 0 && ColorRgb != other.ColorRgb) return false;
+            if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(ColorRgb, other.ColorRgb)) return false;
             return true;
         }
     }
@@ -195,6 +207,10 @@ namespace TypeRight.Signature
                 sig.BoldRaw = f.Bold;
                 sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
+                // 首尾一致性：行首符号/序号与正文不同格式的"混合段"（如 ★10.5pt + 标题16pt）
+                // 曾按首字符整段判类，与均匀段跨判同类 → 首尾不一致的维度置未知（严格模式不判同类）
+                // 注意 sig 是 struct，必须 ref 传参（按值改的是副本）
+                ApplyUniformityCheck(probe, ref sig);
                 TicksFont += Delta(t3);
             }
             catch { }
@@ -262,6 +278,58 @@ namespace TypeRight.Signature
                 return 0;
             }
             catch { return 0; }
+        }
+
+        /// <summary>ColorRgb 的"混合"标记（观测到段内颜色不一致）。区别于 -1（自动/未知）：
+        /// 两个 -1 视为相等（同为自动色），混合标记不与任何值相等。见 FormatSignature.ColorMixed。</summary>
+        private const int ColorMixed = FormatSignature.ColorMixed;
+
+        /// <summary>
+        /// 首尾一致性校验：末个可见字符与首字符逐维比对，不一致的维度置"未知/混合"。
+        /// 严格模式未知即不同类；宽松模式可勾选忽略对应维度后仍可合并（语义正确）。
+        /// 首尾一致但中间不同的情况极罕见（黄金取证未见），按均匀处理。
+        /// </summary>
+        private static void ApplyUniformityCheck(Range firstCharProbe, ref FormatSignature sig)
+        {
+            try
+            {
+                Range para = firstCharProbe.Paragraphs[1].Range;
+                int endPos = para.End - 1;
+                int start = para.Start;
+                int guard = 0;
+                while (endPos > start && guard++ < 6)
+                {
+                    Range last = para.Document.Range(endPos - 1, endPos);
+                    string t = last.Text ?? "";
+                    if (t.Length > 0)
+                    {
+                        char ch = t[0];
+                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　')
+                        {
+                            Font lf = last.Font;
+                            if (!double.IsNaN(sig.SizePt))
+                            {
+                                double lastSize = WordFormatUtils.NormalizeSize(lf.Size);
+                                if (!double.IsNaN(lastSize) && Math.Abs(lastSize - sig.SizePt) >= 0.01)
+                                    sig.SizePt = double.NaN;                    // 混合字号 → 未知
+                            }
+                            if (sig.BoldKnown)
+                            {
+                                int lastBold = lf.Bold;
+                                if (lastBold != sig.BoldRaw) sig.BoldRaw = WordFormatUtils.UndefinedInt; // 混合加粗 → 未知
+                            }
+                            if (sig.ColorRgb >= 0)
+                            {
+                                int lastColor = WordFormatUtils.WdColorToRgb((int)lf.Color);
+                                if (lastColor != sig.ColorRgb) sig.ColorRgb = ColorMixed;   // 混合颜色 → 混合标记
+                            }
+                            return;
+                        }
+                    }
+                    endPos--;
+                }
+            }
+            catch { }
         }
 
         private static int NormalizeItalic(int v)

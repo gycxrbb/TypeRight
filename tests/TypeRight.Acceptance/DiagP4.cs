@@ -28,6 +28,17 @@ namespace TypeRight.Acceptance
                     b.Font.NameFarEast = "MS Mincho"; b.Font.NameAscii = "MS Mincho";
                     b.Font.Size = 10.5f; b.Font.Bold = 0; b.Font.Color = (NetOffice.WordApi.Enums.WdColor)0x1A365D;
                 }
+                // 3 段"混合段"：行首符号 10.5pt 不加粗 + 其余文字 16pt 加粗（同色同字体）
+                for (int i = 1; i <= 3; i++)
+                {
+                    Range m = doc.Range(doc.Content.End - 1, doc.Content.End - 1);
+                    m.InsertAfter("☆混合段" + i + "：行首符号后是大标题文字\r");
+                    m.Font.NameFarEast = "MS Mincho"; m.Font.NameAscii = "MS Mincho";
+                    m.Font.Size = 10.5f; m.Font.Bold = 0; m.Font.Color = (NetOffice.WordApi.Enums.WdColor)0x1A365D;
+                    Paragraph mp = doc.Paragraphs[doc.Paragraphs.Count - 1];
+                    Range rest = doc.Range(mp.Range.Start + 1, mp.Range.End - 1);
+                    rest.Font.Size = 16; rest.Font.Bold = 1;
+                }
 
                 Console.WriteLine("== 全部段落签名 ==");
                 int idx = 0;
@@ -37,8 +48,24 @@ namespace TypeRight.Acceptance
                     Console.WriteLine("  #" + (idx++) + " [" + Trunc(p) + "] " + s);
                 }
 
+                // 混合段取证：首字符 vs 末字符的原始字号/加粗
+                for (int pi = 9; pi <= 11; pi++)
+                {
+                    try
+                    {
+                        Paragraph p = doc.Paragraphs[pi];
+                        int lastPos = p.Range.End - 1;
+                        Range first = doc.Range(p.Range.Start, p.Range.Start + 1);
+                        Range last = doc.Range(lastPos - 1, lastPos);
+                        Console.WriteLine(string.Format("  [混合{0}] 首='{1}' {2}pt B={3} | 末='{4}' {5}pt B={6}",
+                            pi, first.Text, first.Font.Size, first.Font.Bold, last.Text, last.Font.Size, last.Font.Bold));
+                    }
+                    catch (Exception ex) { Console.WriteLine("  [混合" + pi + "] EX " + ex.Message); }
+                }
+
                 Test(doc, env, 1, "小标题为样本");
                 Test(doc, env, 5, "正文为样本");
+                Test(doc, env, 10, "混合段为样本（首10.5/余16pt）");
             }
             finally { try { doc.Close(false); } catch { } }
         }
