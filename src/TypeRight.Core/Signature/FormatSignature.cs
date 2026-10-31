@@ -7,26 +7,48 @@ using TypeRight.Formatting;
 namespace TypeRight.Signature
 {
     /// <summary>
-    /// 格式签名（PRD v2 §2）：段落首个非空 run 的有效格式元组
-    /// (中文字体, 西文字体, 字号, 加粗, 斜体, 颜色, 对齐)。读取的是 Word 解析后的有效值。
+    /// 格式签名（PRD v2 §2，双锚点模型）：段落**首个可见字符**与**末个可见字符**两个锚点的
+    /// (中文字体, 西文字体, 字号, 加粗, 颜色) 元组 + 段落级斜体/对齐。
+    /// 两个段落判同类 ⇔ 两个锚点分别相等：
+    /// - 均匀段（首尾同格式）退化为旧版单锚点精确匹配；
+    /// - 同构混合段（如 9 个"行首★加粗着色 + 段尾普通"的导读框）互相命中；
+    /// - 混合段与首字符同格式的均匀段不命中（跨判 bug 修复）。
+    /// 未知值（NaN 字号 / 杂值加粗 / null 字体）不与任何值相等——宁可少命中，不可错命中。
     /// </summary>
     public struct FormatSignature : IEquatable<FormatSignature>
     {
-        public string EastAsiaFont;   // null = 未知/混合
+        // ---- 首锚点（保留原字段名：方案规则/录制等既有消费方按首锚点工作）----
+        public string EastAsiaFont;   // null = 未知
         public string LatinFont;
-        public double SizePt;         // NaN = 未知/混合
-        public int BoldRaw;           // -1 / 0 / 9999999(混合)
+        public double SizePt;         // NaN = 未知
+        public int BoldRaw;           // -1 真 / 0 假 / 其他(9999999/杂值) = 未知
         public int ItalicRaw;
-        public int ColorRgb;          // -1 = 自动/混合；0xRRGGBB
+        public int ColorRgb;          // -1 = 自动；0xRRGGBB
         public string Alignment;      // "l"/"c"/"r"/"j"/"?"
 
-        /// <summary>ColorRgb 的"混合"标记（段内颜色不一致）。区别于 -1（自动/未知）：
-        /// 两个 -1 视为相等（同为自动色），混合标记不与任何值相等。</summary>
-        public const int ColorMixed = -2;
+        // ---- 尾锚点（段内格式不一致的段落靠它与同构混合段相认）----
+        public string LastEastAsiaFont;
+        public string LastLatinFont;
+        public double LastSizePt;
+        public int LastBoldRaw;
+        public int LastColorRgb;
 
         public bool Bold { get { return BoldRaw == -1; } }
         public bool BoldMixed { get { return BoldRaw == WordFormatUtils.UndefinedInt; } }
         public bool Italic { get { return ItalicRaw == -1; } }
+
+        /// <summary>首尾锚点是否一致（均匀段）。</summary>
+        public bool IsUniform
+        {
+            get
+            {
+                return string.Equals(EastAsiaFont, LastEastAsiaFont, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(LatinFont, LastLatinFont, StringComparison.OrdinalIgnoreCase)
+                    && SizePtEquals(SizePt, LastSizePt)
+                    && BoldRaw == LastBoldRaw
+                    && ColorRgb == LastColorRgb;
+            }
+        }
 
         public bool IsEmpty
         {
@@ -35,30 +57,24 @@ namespace TypeRight.Signature
 
         public override string ToString()
         {
-            string colorKey = ColorRgb == ColorMixed ? "混合" : (ColorRgb < 0 ? "自动" : ColorRgb.ToString("X6"));
-            return string.Format("{0}/{1} {2}pt B={3} I={4} #{5} {6}",
+            string head = string.Format("{0}/{1} {2}pt B={3} #{4} I={5} {6}",
                 EastAsiaFont ?? "?", LatinFont ?? "?",
                 double.IsNaN(SizePt) ? "?" : SizePt.ToString("0.#"),
-                BoldMixed ? "?" : (Bold ? 1 : 0),
+                BoldRaw == -1 ? 1 : (BoldRaw == 0 ? 0 : -1),
+                ColorRgb < 0 ? "自动" : ColorRgb.ToString("X6"),
                 ItalicRaw,
-                colorKey,
                 Alignment);
+            if (IsUniform) return head;
+            return head + string.Format(" ⇄尾 {0}/{1} {2}pt B={3} #{4}",
+                LastEastAsiaFont ?? "?", LastLatinFont ?? "?",
+                double.IsNaN(LastSizePt) ? "?" : LastSizePt.ToString("0.#"),
+                LastBoldRaw == -1 ? 1 : (LastBoldRaw == 0 ? 0 : -1),
+                LastColorRgb < 0 ? "自动" : LastColorRgb.ToString("X6"));
         }
 
         public bool Equals(FormatSignature other)
         {
-            return string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)
-                && SizePtEquals(SizePt, other.SizePt)
-                && BoldEquals(this, other)
-                && ColorEquals(ColorRgb, other.ColorRgb);
-        }
-
-        /// <summary>颜色相等：混合标记（ColorMixed）不与任何值相等；两个 -1（自动）相等。</summary>
-        private static bool ColorEquals(int a, int b)
-        {
-            if (a == ColorMixed || b == ColorMixed) return false;
-            return a == b;
+            return Matches(other, IgnoreDims.None);
         }
 
         // Word 的 Font.Bold/Italic 会返回非标准杂值（实测混入颜色字节，如 1717853）。
@@ -67,20 +83,29 @@ namespace TypeRight.Signature
         public bool BoldKnown { get { return BoldRaw == -1 || BoldRaw == 0; } }
         public bool ItalicEffective { get { return ItalicRaw == -1; } }
 
-        // 未知字号不等于未知字号：读取失败的段落曾因 NaN==NaN 判等而互相"同类"（跨判 bug）。
-        // 严格方向取舍：宁可少命中，不可错命中。
+        // 未知字号不等于任何字号（含未知==未知）：读取失败的段落不得互相"同类"（跨判 bug）。
         private static bool SizePtEquals(double a, double b)
         {
             if (double.IsNaN(a) || double.IsNaN(b)) return false;
             return Math.Abs(a - b) < 0.01;
         }
 
-        // 加粗含未知（杂值）即不同类：杂值曾折为"非加粗"，与真·非加粗跨判
-        // （视觉加粗但读到杂值的标题，会与正文判同类）。
-        private static bool BoldEquals(FormatSignature a, FormatSignature b)
+        private static bool BoldEquals(int a, int b)
         {
-            if (!a.BoldKnown || !b.BoldKnown) return false;
-            return a.BoldRaw == b.BoldRaw;
+            bool aKnown = a == -1 || a == 0, bKnown = b == -1 || b == 0;
+            if (!aKnown || !bKnown) return false;
+            return a == b;
+        }
+
+        private static bool ColorEquals(int a, int b)
+        {
+            return a == b;   // -1(自动)==-1(自动) 相等；-1 vs 显式色 不等
+        }
+
+        private static bool FontEquals(string a, string b)
+        {
+            if (a == null || b == null) return false;   // 未知字体不与任何字体相等（含未知==未知）
+            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
         }
 
         public override bool Equals(object obj)
@@ -97,8 +122,10 @@ namespace TypeRight.Signature
                 h = h * 31 + (LatinFont == null ? 0 : StringComparer.OrdinalIgnoreCase.GetHashCode(LatinFont));
                 h = h * 31 + (double.IsNaN(SizePt) ? 0 : SizePt.GetHashCode());
                 h = h * 31 + BoldRaw;
-                h = h * 31 + ItalicRaw;
                 h = h * 31 + ColorRgb;
+                h = h * 31 + (double.IsNaN(LastSizePt) ? 0 : LastSizePt.GetHashCode());
+                h = h * 31 + LastBoldRaw;
+                h = h * 31 + LastColorRgb;
                 h = h * 31 + (Alignment == null ? 0 : Alignment.GetHashCode());
                 return h;
             }
@@ -116,17 +143,22 @@ namespace TypeRight.Signature
         }
 
         /// <summary>
-        /// 宽松比较：勾选忽略的维度不参与比对。
-        /// 对齐不参与比较（黄金文件取证：居中主标题与左对齐模块标题需在“忽略字号”下合并为 8 段）；
-        /// 斜体/加粗按归一化有效值比较（Word 杂值容忍）。
+        /// 同类判定：双锚点分别相等（勾选忽略的维度在两个锚点上都不参与比对）。
+        /// 对齐不参与比较（黄金取证：居中主标题与左对齐模块标题需在"忽略字号"下合并为 8 段）；
+        /// 斜体仅记录展示不参与比较。
         /// </summary>
         public bool Matches(FormatSignature other, IgnoreDims ignore)
         {
-            if (!string.Equals(EastAsiaFont, other.EastAsiaFont, StringComparison.OrdinalIgnoreCase)) return false;
-            if (!string.Equals(LatinFont, other.LatinFont, StringComparison.OrdinalIgnoreCase)) return false;
-            if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
-            if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(this, other)) return false;
-            if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(ColorRgb, other.ColorRgb)) return false;
+            if (!FontEquals(EastAsiaFont, other.EastAsiaFont)) return false;
+            if (!FontEquals(LatinFont, other.LatinFont)) return false;
+            if (!FontEquals(LastEastAsiaFont, other.LastEastAsiaFont)) return false;
+            if (!FontEquals(LastLatinFont, other.LastLatinFont)) return false;
+            if ((ignore & IgnoreDims.SizePt) == 0 &&
+                (!SizePtEquals(SizePt, other.SizePt) || !SizePtEquals(LastSizePt, other.LastSizePt))) return false;
+            if ((ignore & IgnoreDims.Bold) == 0 &&
+                (!BoldEquals(BoldRaw, other.BoldRaw) || !BoldEquals(LastBoldRaw, other.LastBoldRaw))) return false;
+            if ((ignore & IgnoreDims.Color) == 0 &&
+                (!ColorEquals(ColorRgb, other.ColorRgb) || !ColorEquals(LastColorRgb, other.LastColorRgb))) return false;
             return true;
         }
     }
@@ -196,7 +228,12 @@ namespace TypeRight.Signature
 
             if (probe == null) return EmptySig();
 
-            var sig = new FormatSignature { SizePt = double.NaN, ColorRgb = -1, Alignment = "?" };
+            var sig = new FormatSignature
+            {
+                SizePt = double.NaN, ColorRgb = -1,
+                LastSizePt = double.NaN, LastBoldRaw = WordFormatUtils.UndefinedInt, LastColorRgb = -1,
+                Alignment = "?"
+            };
             try
             {
                 long t3 = Now();
@@ -207,10 +244,7 @@ namespace TypeRight.Signature
                 sig.BoldRaw = f.Bold;
                 sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
-                // 首尾一致性：行首符号/序号与正文不同格式的"混合段"（如 ★10.5pt + 标题16pt）
-                // 曾按首字符整段判类，与均匀段跨判同类 → 首尾不一致的维度置未知（严格模式不判同类）
-                // 注意 sig 是 struct，必须 ref 传参（按值改的是副本）
-                ApplyUniformityCheck(probe, ref sig);
+                ReadLastAnchor(probe, ref sig);   // 尾锚点；单可见字符段回填为首锚点（均匀）
                 TicksFont += Delta(t3);
             }
             catch { }
@@ -234,7 +268,66 @@ namespace TypeRight.Signature
 
         private static FormatSignature EmptySig()
         {
-            return new FormatSignature { SizePt = double.NaN, ColorRgb = -1, Alignment = "?" };
+            return new FormatSignature
+            {
+                SizePt = double.NaN, ColorRgb = -1,
+                LastSizePt = double.NaN, LastBoldRaw = WordFormatUtils.UndefinedInt, LastColorRgb = -1,
+                Alignment = "?"
+            };
+        }
+
+        /// <summary>末个可见字符锚点（与首字符不同位置才算；单可见字符段返回 null → 视为均匀段）。</summary>
+        private static Range FindLastVisibleCharRange(Range firstCharProbe)
+        {
+            try
+            {
+                Range para = firstCharProbe.Paragraphs[1].Range;
+                int endPos = para.End - 1;
+                int start = para.Start;
+                int guard = 0;
+                while (endPos > start && guard++ < 6)
+                {
+                    Range last = para.Document.Range(endPos - 1, endPos);
+                    string t = last.Text ?? "";
+                    if (t.Length > 0)
+                    {
+                        char ch = t[0];
+                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　')
+                            return last.Start == firstCharProbe.Start ? null : last;
+                    }
+                    endPos--;
+                }
+                return null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>填充尾锚点；找不到独立的末字符（单可见字符段）时回填首锚点值（均匀语义）。</summary>
+        private static void ReadLastAnchor(Range firstCharProbe, ref FormatSignature sig)
+        {
+            Range lastChar = FindLastVisibleCharRange(firstCharProbe);
+            if (lastChar == null)
+            {
+                sig.LastEastAsiaFont = sig.EastAsiaFont;
+                sig.LastLatinFont = sig.LatinFont;
+                sig.LastSizePt = sig.SizePt;
+                sig.LastBoldRaw = sig.BoldRaw;
+                sig.LastColorRgb = sig.ColorRgb;
+                return;
+            }
+            try
+            {
+                Font lf = lastChar.Font;
+                sig.LastEastAsiaFont = NormalizeFont(lf.NameFarEast);
+                sig.LastLatinFont = NormalizeFont(lf.NameAscii);
+                sig.LastSizePt = WordFormatUtils.NormalizeSize(lf.Size);
+                sig.LastBoldRaw = lf.Bold;
+                sig.LastColorRgb = WordFormatUtils.WdColorToRgb((int)lf.Color);
+            }
+            catch
+            {
+                // 尾锚点读取失败 → 保持未知（该段与谁都不判同类，宁可少命中不可错命中）
+            }
         }
 
         /// <summary>Word 对未知字体名可能返回空串，归一化为 null（与其他未知一起参与全等比较）。</summary>
@@ -282,56 +375,6 @@ namespace TypeRight.Signature
 
         /// <summary>ColorRgb 的"混合"标记（观测到段内颜色不一致）。区别于 -1（自动/未知）：
         /// 两个 -1 视为相等（同为自动色），混合标记不与任何值相等。见 FormatSignature.ColorMixed。</summary>
-        private const int ColorMixed = FormatSignature.ColorMixed;
-
-        /// <summary>
-        /// 首尾一致性校验：末个可见字符与首字符逐维比对，不一致的维度置"未知/混合"。
-        /// 严格模式未知即不同类；宽松模式可勾选忽略对应维度后仍可合并（语义正确）。
-        /// 首尾一致但中间不同的情况极罕见（黄金取证未见），按均匀处理。
-        /// </summary>
-        private static void ApplyUniformityCheck(Range firstCharProbe, ref FormatSignature sig)
-        {
-            try
-            {
-                Range para = firstCharProbe.Paragraphs[1].Range;
-                int endPos = para.End - 1;
-                int start = para.Start;
-                int guard = 0;
-                while (endPos > start && guard++ < 6)
-                {
-                    Range last = para.Document.Range(endPos - 1, endPos);
-                    string t = last.Text ?? "";
-                    if (t.Length > 0)
-                    {
-                        char ch = t[0];
-                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　')
-                        {
-                            Font lf = last.Font;
-                            if (!double.IsNaN(sig.SizePt))
-                            {
-                                double lastSize = WordFormatUtils.NormalizeSize(lf.Size);
-                                if (!double.IsNaN(lastSize) && Math.Abs(lastSize - sig.SizePt) >= 0.01)
-                                    sig.SizePt = double.NaN;                    // 混合字号 → 未知
-                            }
-                            if (sig.BoldKnown)
-                            {
-                                int lastBold = lf.Bold;
-                                if (lastBold != sig.BoldRaw) sig.BoldRaw = WordFormatUtils.UndefinedInt; // 混合加粗 → 未知
-                            }
-                            if (sig.ColorRgb >= 0)
-                            {
-                                int lastColor = WordFormatUtils.WdColorToRgb((int)lf.Color);
-                                if (lastColor != sig.ColorRgb) sig.ColorRgb = ColorMixed;   // 混合颜色 → 混合标记
-                            }
-                            return;
-                        }
-                    }
-                    endPos--;
-                }
-            }
-            catch { }
-        }
-
         private static int NormalizeItalic(int v)
         {
             return v == -1 || v == 0 ? v : WordFormatUtils.UndefinedInt;

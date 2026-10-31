@@ -12,13 +12,55 @@ namespace TypeRight.Tests
     public class FormatSignatureTests
     {
         private static FormatSignature Sig(double size = 10.5, bool bold = false, int color = -1,
-            string east = "宋体", string latin = "Times New Roman", string align = "l", int italic = 0)
+            string east = "宋体", string latin = "Times New Roman", string align = "l", int italic = 0,
+            double? lastSize = null, bool? lastBold = null, int? lastColor = null)
         {
+            // 默认尾锚点=首锚点（均匀段）；传 last* 构造混合段
             return new FormatSignature
             {
                 EastAsiaFont = east, LatinFont = latin, SizePt = size,
-                BoldRaw = bold ? -1 : 0, ItalicRaw = italic, ColorRgb = color, Alignment = align
+                BoldRaw = bold ? -1 : 0, ItalicRaw = italic, ColorRgb = color, Alignment = align,
+                LastEastAsiaFont = east, LastLatinFont = latin,
+                LastSizePt = lastSize ?? size,
+                LastBoldRaw = (lastBold ?? bold) ? -1 : 0,
+                LastColorRgb = lastColor ?? color
             };
+        }
+
+        [Fact]
+        public void MixedFamilyMatchesEachOther()
+        {
+            // 同构混合段（行首10.5不加粗 + 段尾16加粗，如 ★ 导读框）互相命中
+            var a = Sig(lastSize: 16, lastBold: true);
+            var b = Sig(lastSize: 16, lastBold: true);
+            Assert.True(a.Equals(b));
+        }
+
+        [Fact]
+        public void MixedNotMatchUniform()
+        {
+            // 混合段不得命中首字符同格式的均匀段（跨判 bug 场景）
+            var mixed = Sig(lastSize: 16, lastBold: true);
+            Assert.False(mixed.Equals(Sig()));
+            Assert.False(Sig().Equals(mixed));
+        }
+
+        [Fact]
+        public void DifferentMixedStructuresNotMatch()
+        {
+            // 尾锚点不同的两个混合段不互命中
+            var a = Sig(lastSize: 16, lastBold: true);
+            var b = Sig(lastSize: 18, lastBold: true);
+            Assert.False(a.Equals(b));
+        }
+
+        [Fact]
+        public void LooseIgnoreDimsCoverBothAnchors()
+        {
+            // 宽松忽略字号后，字号不同的两个混合段可合并（字体+加粗+颜色仍比）
+            var a = Sig(lastSize: 16, lastBold: true);
+            var b = Sig(size: 12, lastSize: 18, lastBold: true);
+            Assert.True(a.Matches(b, FormatSignature.IgnoreDims.SizePt));
         }
 
         [Fact]

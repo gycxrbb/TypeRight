@@ -71,7 +71,10 @@ namespace TypeRight.Acceptance
             // "文件正在使用"且永不返回（曾把整套验收卡死在 TC-15）
             string ownerLock = Path.Combine(OutputDir, "~$" + tag + ".docx");
             try { if (File.Exists(ownerLock)) File.Delete(ownerLock); } catch { }
+            // 源资产已设只读保护；File.Copy 会继承只读属性，先清目标再覆盖
+            try { if (File.Exists(target)) { var fi0 = new FileInfo(target); fi0.IsReadOnly = false; } } catch { }
             File.Copy(OriginalDocx, target, true);
+            try { var fi = new FileInfo(target); if (fi.IsReadOnly) fi.IsReadOnly = false; } catch { }
             return App.Documents.Open(target);
         }
 
