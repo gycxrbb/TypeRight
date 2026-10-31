@@ -39,6 +39,29 @@ namespace TypeRight.Acceptance
                     Range rest = doc.Range(mp.Range.Start + 1, mp.Range.End - 1);
                     rest.Font.Size = 16; rest.Font.Bold = 1;
                 }
+                // 两族"同首尾锚、不同中段"（用户实测投诉场景）：首=☆10.5B0 尾=12ptB0，中段一粗一细
+                for (int i = 1; i <= 2; i++)
+                {
+                    Range m = doc.Range(doc.Content.End - 1, doc.Content.End - 1);
+                    m.InsertAfter("★X族" + i + "：行首符号，中间粗体，结尾小字。\r");
+                    m.Font.NameFarEast = "MS Mincho"; m.Font.NameAscii = "MS Mincho";
+                    m.Font.Size = 10.5f; m.Font.Bold = 0; m.Font.Color = (NetOffice.WordApi.Enums.WdColor)0x1A365D;
+                    Paragraph mp = doc.Paragraphs[doc.Paragraphs.Count - 1];
+                    Range mid = doc.Range(mp.Range.Start + 4, mp.Range.End - 5);
+                    mid.Font.Size = 16; mid.Font.Bold = 1;
+                    Range tail = doc.Range(mp.Range.End - 5, mp.Range.End - 1);
+                    tail.Font.Size = 12; tail.Font.Bold = 0;
+                }
+                for (int i = 1; i <= 2; i++)
+                {
+                    Range m = doc.Range(doc.Content.End - 1, doc.Content.End - 1);
+                    m.InsertAfter("★Y族" + i + "：行首符号，中间正常，结尾小字。\r");
+                    m.Font.NameFarEast = "MS Mincho"; m.Font.NameAscii = "MS Mincho";
+                    m.Font.Size = 10.5f; m.Font.Bold = 0; m.Font.Color = (NetOffice.WordApi.Enums.WdColor)0x1A365D;
+                    Paragraph mp = doc.Paragraphs[doc.Paragraphs.Count - 1];
+                    Range tail = doc.Range(mp.Range.End - 5, mp.Range.End - 1);
+                    tail.Font.Size = 12; tail.Font.Bold = 0;
+                }
 
                 Console.WriteLine("== 全部段落签名 ==");
                 int idx = 0;
@@ -46,6 +69,20 @@ namespace TypeRight.Acceptance
                 {
                     var s = FormatSignatureReader.Read(p);
                     Console.WriteLine("  #" + (idx++) + " [" + Trunc(p) + "] " + s);
+                }
+
+                // 标题段锚点级取证（抖动定位）：首/中×3/尾 的原始值
+                for (int pi = 1; pi <= 3; pi++)
+                {
+                    var s = FormatSignatureReader.Read(doc.Paragraphs[pi]);
+                    string mids = s.ExtraAnchors == null ? "null" : "";
+                    if (s.ExtraAnchors != null)
+                        foreach (var e in s.ExtraAnchors)
+                            mids += string.Format("[{0}/{1} {2}pt B={3} #{4:X6}] ", e.Ea, e.Latin,
+                                double.IsNaN(e.Size) ? -1 : e.Size, e.Bold, e.Color < 0 ? 0 : e.Color);
+                    Console.WriteLine(string.Format("  [标题{0}] 首 B={1} size={2} #{3:X6} | 中 {4}| 尾 B={5} size={6}",
+                        pi, s.BoldRaw, double.IsNaN(s.SizePt) ? -1 : s.SizePt, s.ColorRgb < 0 ? 0 : s.ColorRgb,
+                        mids, s.LastBoldRaw, double.IsNaN(s.LastSizePt) ? -1 : s.LastSizePt));
                 }
 
                 // 混合段取证：首字符 vs 末字符的原始字号/加粗
@@ -66,6 +103,8 @@ namespace TypeRight.Acceptance
                 Test(doc, env, 1, "小标题为样本");
                 Test(doc, env, 5, "正文为样本");
                 Test(doc, env, 10, "混合段为样本（首10.5/余16pt）");
+                Test(doc, env, 13, "X族为样本（同首尾锚、中段16pt粗）");
+                Test(doc, env, 15, "Y族为样本（同首尾锚、中段10.5细）");
             }
             finally { try { doc.Close(false); } catch { } }
         }

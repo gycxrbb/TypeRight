@@ -33,6 +33,18 @@ namespace TypeRight.Signature
         public int LastBoldRaw;
         public int LastColorRgb;
 
+        /// <summary>中段采样锚点（段落可见区间 25%/50%/75% 三个位置）。
+        /// 双锚点对"首尾相同、中间不同"的两个家族无能为力（用户实测命中），
+        /// 中段采样补盲区。null（未提供）与 null 相等；null 与非 null 不等（严格）。</summary>
+        public struct AnchorExtra
+        {
+            public string Ea, Latin;
+            public double Size;
+            public int Bold, Color;
+        }
+
+        public AnchorExtra[] ExtraAnchors;
+
         public bool Bold { get { return BoldRaw == -1; } }
         public bool BoldMixed { get { return BoldRaw == WordFormatUtils.UndefinedInt; } }
         public bool Italic { get { return ItalicRaw == -1; } }
@@ -64,12 +76,32 @@ namespace TypeRight.Signature
                 ColorRgb < 0 ? "自动" : ColorRgb.ToString("X6"),
                 ItalicRaw,
                 Alignment);
-            if (IsUniform) return head;
-            return head + string.Format(" ⇄尾 {0}/{1} {2}pt B={3} #{4}",
+            if (IsUniform && MiddleUniform(sig: this)) return head;
+            string tail = IsUniform ? "" : string.Format(" ⇄尾 {0}/{1} {2}pt B={3} #{4}",
                 LastEastAsiaFont ?? "?", LastLatinFont ?? "?",
                 double.IsNaN(LastSizePt) ? "?" : LastSizePt.ToString("0.#"),
                 LastBoldRaw == -1 ? 1 : (LastBoldRaw == 0 ? 0 : -1),
                 LastColorRgb < 0 ? "自动" : LastColorRgb.ToString("X6"));
+            if (MiddleUniform(this)) return head + tail;
+            var sb = new System.Text.StringBuilder(" ⋯中");
+            foreach (FormatSignature.AnchorExtra e in ExtraAnchors)
+            {
+                sb.Append('[').Append(double.IsNaN(e.Size) ? "?" : e.Size.ToString("0.#"))
+                  .Append("pt B").Append(e.Bold == -1 ? 1 : (e.Bold == 0 ? 0 : -1)).Append(']');
+            }
+            return head + tail + sb;
+        }
+
+        /// <summary>中段采样点是否都与首锚一致（展示用）。</summary>
+        private bool MiddleUniform(FormatSignature sig)
+        {
+            if (sig.ExtraAnchors == null) return true;
+            foreach (FormatSignature.AnchorExtra e in sig.ExtraAnchors)
+            {
+                if (!SizePtEquals(e.Size, sig.SizePt) || !BoldEquals(e.Bold, sig.BoldRaw) ||
+                    !ColorEquals(e.Color, sig.ColorRgb)) return false;   // 字体不比（读取抖动）
+            }
+            return true;
         }
 
         public bool Equals(FormatSignature other)
@@ -143,7 +175,7 @@ namespace TypeRight.Signature
         }
 
         /// <summary>
-        /// 同类判定：双锚点分别相等（勾选忽略的维度在两个锚点上都不参与比对）。
+        /// 同类判定：双锚点 + 中段采样锚点分别相等（勾选忽略的维度在所有锚点都不参与比对）。
         /// 对齐不参与比较（黄金取证：居中主标题与左对齐模块标题需在"忽略字号"下合并为 8 段）；
         /// 斜体仅记录展示不参与比较。
         /// </summary>
@@ -159,6 +191,22 @@ namespace TypeRight.Signature
                 (!BoldEquals(BoldRaw, other.BoldRaw) || !BoldEquals(LastBoldRaw, other.LastBoldRaw))) return false;
             if ((ignore & IgnoreDims.Color) == 0 &&
                 (!ColorEquals(ColorRgb, other.ColorRgb) || !ColorEquals(LastColorRgb, other.LastColorRgb))) return false;
+
+            // 中段采样：首尾相同时，中段不同的两个家族在此分离。
+            // 中段不比字体：Font.Name* 对部分区间存在抖动（同字符多次读取返回不同字体名，
+            // 实测 MS Mincho ↔ 微软雅黑），采样放大读取量后必然误伤；字号/加粗/颜色足以分离。
+            FormatSignature.AnchorExtra[] ea = ExtraAnchors, eb = other.ExtraAnchors;
+            if ((ea == null) != (eb == null)) return false;
+            if (ea != null)
+            {
+                if (ea.Length != eb.Length) return false;
+                for (int i = 0; i < ea.Length; i++)
+                {
+                    if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(ea[i].Size, eb[i].Size)) return false;
+                    if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(ea[i].Bold, eb[i].Bold)) return false;
+                    if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(ea[i].Color, eb[i].Color)) return false;
+                }
+            }
             return true;
         }
     }
@@ -180,18 +228,21 @@ namespace TypeRight.Signature
             if (paragraph == null) return EmptySig();
 
             Range probe = null;
+            int start = 0;
+            string text = "";
+            int offset = -1;
             try
             {
                 long t0 = Now();
                 Range whole = paragraph.Range;
-                int start = whole.Start;
+                start = whole.Start;
                 TicksRange += Delta(t0);
 
                 long t1 = Now();
-                string text = whole.Text ?? "";
+                text = whole.Text ?? "";
                 TicksText += Delta(t1);
 
-                int offset = -1;
+                offset = -1;
                 int limit = System.Math.Min(text.Length, 24);
                 for (int i = 0; i < limit; i++)
                 {
@@ -238,13 +289,15 @@ namespace TypeRight.Signature
             {
                 long t3 = Now();
                 Font f = probe.Font;
-                sig.EastAsiaFont = NormalizeFont(f.NameFarEast);
-                sig.LatinFont = NormalizeFont(f.NameAscii);
-                sig.SizePt = WordFormatUtils.NormalizeSize(f.Size);
-                sig.BoldRaw = f.Bold;
+                sig.EastAsiaFont = ReadFontStable(() => f.NameFarEast);
+                sig.LatinFont = ReadFontStable(() => f.NameAscii);
+                sig.SizePt = ReadSizeStable(f);
+                sig.BoldRaw = ReadBoldStable(f);
                 sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
-                ReadLastAnchor(probe, ref sig);   // 尾锚点；单可见字符段回填为首锚点（均匀）
+                Range lastChar = FindLastVisibleCharRange(probe);
+                ReadLastAnchor(lastChar, ref sig);        // 尾锚点；单可见字符段回填为首锚点（均匀）
+                ReadExtraAnchors(probe, lastChar, start, text, offset, ref sig);   // 中段 25/50/75% 采样
                 TicksFont += Delta(t3);
             }
             catch { }
@@ -303,9 +356,8 @@ namespace TypeRight.Signature
         }
 
         /// <summary>填充尾锚点；找不到独立的末字符（单可见字符段）时回填首锚点值（均匀语义）。</summary>
-        private static void ReadLastAnchor(Range firstCharProbe, ref FormatSignature sig)
+        private static void ReadLastAnchor(Range lastChar, ref FormatSignature sig)
         {
-            Range lastChar = FindLastVisibleCharRange(firstCharProbe);
             if (lastChar == null)
             {
                 sig.LastEastAsiaFont = sig.EastAsiaFont;
@@ -317,17 +369,119 @@ namespace TypeRight.Signature
             }
             try
             {
-                Font lf = lastChar.Font;
-                sig.LastEastAsiaFont = NormalizeFont(lf.NameFarEast);
-                sig.LastLatinFont = NormalizeFont(lf.NameAscii);
-                sig.LastSizePt = WordFormatUtils.NormalizeSize(lf.Size);
-                sig.LastBoldRaw = lf.Bold;
-                sig.LastColorRgb = WordFormatUtils.WdColorToRgb((int)lf.Color);
+                FormatSignature.AnchorExtra a = ReadAnchor(lastChar, compareFonts: true);
+                sig.LastEastAsiaFont = a.Ea;
+                sig.LastLatinFont = a.Latin;
+                sig.LastSizePt = a.Size;
+                sig.LastBoldRaw = a.Bold;
+                sig.LastColorRgb = a.Color;
             }
             catch
             {
                 // 尾锚点读取失败 → 保持未知（该段与谁都不判同类，宁可少命中不可错命中）
             }
+        }
+
+        private static FormatSignature.AnchorExtra ReadAnchor(Range oneChar, bool compareFonts)
+        {
+            Font lf = oneChar.Font;
+            return new FormatSignature.AnchorExtra
+            {
+                Ea = compareFonts ? ReadFontStable(() => lf.NameFarEast) : NormalizeFont(lf.NameFarEast),
+                Latin = compareFonts ? ReadFontStable(() => lf.NameAscii) : NormalizeFont(lf.NameAscii),
+                Size = ReadSizeStable(lf),
+                Bold = ReadBoldStable(lf),
+                Color = WordFormatUtils.WdColorToRgb((int)lf.Color)
+            };
+        }
+
+        /// <summary>字体名读取抖动（同字符多次读取返回不同名）：读两次一致即取；
+        /// 不一致读第三次取多数。首/尾锚（参与字体比较）使用。</summary>
+        private static string ReadFontStable(Func<string> read)
+        {
+            string a = read();
+            string b = read();
+            if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return NormalizeFont(a);
+            string c = read();
+            if (string.Equals(a, c, StringComparison.OrdinalIgnoreCase)) return NormalizeFont(a);
+            if (string.Equals(b, c, StringComparison.OrdinalIgnoreCase)) return NormalizeFont(b);
+            return NormalizeFont(b);   // 三次各异：无法判定，取第二次
+        }
+
+        /// <summary>Font.Bold 存在间歇性垃圾值（实测混入颜色字节，同一字符多次读取结果不同）。
+        /// 重读最多 3 次取有效值（-1/0）；仍垃圾则保留（严格语义：未知不与任何值相等）。</summary>
+        private static int ReadBoldStable(Font f)
+        {
+            int v = f.Bold;
+            if (v == -1 || v == 0) return v;
+            for (int i = 0; i < 3; i++)
+            {
+                v = f.Bold;
+                if (v == -1 || v == 0) return v;
+            }
+            return v;
+        }
+
+        /// <summary>字号同理重读（wdUndefined 间歇返回）。</summary>
+        private static double ReadSizeStable(Font f)
+        {
+            double v = WordFormatUtils.NormalizeSize(f.Size);
+            if (!double.IsNaN(v)) return v;
+            for (int i = 0; i < 2; i++)
+            {
+                v = WordFormatUtils.NormalizeSize(f.Size);
+                if (!double.IsNaN(v)) return v;
+            }
+            return v;
+        }
+
+        /// <summary>中段采样锚点：可见区间 25%/50%/75% 三个位置各读一锚。
+        /// 双锚点对"首尾相同、中间不同"的两个家族无区分力（用户实测命中），中段采样补盲。
+        /// 单可见字符段/极短段：采样点全部回退为首锚点（均匀语义）。</summary>
+        private static void ReadExtraAnchors(Range firstCharProbe, Range lastChar, int paraStart,
+            string text, int firstIdx, ref FormatSignature sig)
+        {
+            var extras = new FormatSignature.AnchorExtra[3];
+            try
+            {
+                int lastIdx = firstIdx;   // 无独立尾字符 → 全部回退首锚
+                if (lastChar != null) lastIdx = lastChar.Start - paraStart;
+                for (int k = 0; k < 3; k++)
+                {
+                    double frac = 0.25 * (k + 1);
+                    int idx = firstIdx + (int)Math.Round((lastIdx - firstIdx) * frac);
+                    // 落在空白字符上则向后找可见字符（≤4 步，不越过尾字符）
+                    int guard = 0;
+                    while (idx < lastIdx && guard++ < 4)
+                    {
+                        char ch = idx >= 0 && idx < text.Length ? text[idx] : '\0';
+                        if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　' && ch != '\t' && ch != '\0') break;
+                        idx++;
+                    }
+                    if (idx <= firstIdx || idx >= lastIdx || idx >= text.Length)
+                    {
+                        extras[k] = FirstAnchorOf(sig);
+                        continue;
+                    }
+                    Range r = firstCharProbe.Document.Range(paraStart + idx, paraStart + idx + 1);
+                    extras[k] = ReadAnchor(r, compareFonts: false);
+                }
+            }
+            catch
+            {
+                // 读取失败 → 回退首锚（保持段落可比性，中段差异漏检概率极小）
+                for (int k = 0; k < 3; k++) extras[k] = FirstAnchorOf(sig);
+            }
+            sig.ExtraAnchors = extras;
+        }
+
+        private static FormatSignature.AnchorExtra FirstAnchorOf(FormatSignature sig)
+        {
+            return new FormatSignature.AnchorExtra
+            {
+                Ea = sig.EastAsiaFont, Latin = sig.LatinFont,
+                Size = sig.SizePt, Bold = sig.BoldRaw, Color = sig.ColorRgb
+            };
         }
 
         /// <summary>Word 对未知字体名可能返回空串，归一化为 null（与其他未知一起参与全等比较）。</summary>
