@@ -91,6 +91,27 @@ else {
     Set-Reg $addinKey "CommandLineSafe" 0
 }
 
+# 无论管理员与否，始终补写 HKCU 注册：
+# 实测本机有清理工具会持续清空 HKLM COM 注册的默认值（InprocServer32/CLSID 指向被抹，
+# 附带 x-test 标记），导致 Word 不再枚举加载项；HKCU 注册不受其管辖且优先级更高。
+$codeBase = Join-Path $deployDir "TypeRight.Addin.dll"
+$clsidStr = "{6C7C9713-51A1-4A55-8C0D-3A4E5F607182}"
+$asmName = "TypeRight.Addin, Version=$version, Culture=neutral, PublicKeyToken=null"
+reg add "HKCU\Software\Classes\TypeRight.Connect" /ve /d "TypeRight.Connect" /f | Out-Null
+reg add "HKCU\Software\Classes\TypeRight.Connect\CLSID" /ve /d $clsidStr /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr" /ve /d "TypeRight.Connect" /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\InprocServer32" /ve /d "mscoree.dll" /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\InprocServer32" /v ThreadingModel /d "Both" /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\InprocServer32" /v Assembly /d $asmName /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\InprocServer32" /v Class /d "TypeRight.Addin.TypeRightAddin" /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\InprocServer32" /v RuntimeVersion /d "v4.0.30319" /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\InprocServer32" /v CodeBase /d $codeBase /f | Out-Null
+reg add "HKCU\Software\Classes\CLSID\$clsidStr\ProgId" /ve /d "TypeRight.Connect" /f | Out-Null
+reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v LoadBehavior /t REG_DWORD /d 3 /f | Out-Null
+reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v FriendlyName /d "TypeRight" /f | Out-Null
+reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v Description /d "TypeRight" /f | Out-Null
+reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v CommandLineSafe /t REG_DWORD /d 0 /f | Out-Null
+
 Write-Host "== 4/4 完成 ==" -ForegroundColor Cyan
 Write-Host "安装完成 → $deployDir"
 Write-Host "启动 Word 后功能区将出现「智能排版」选项卡。"
