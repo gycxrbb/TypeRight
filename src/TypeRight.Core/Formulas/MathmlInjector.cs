@@ -13,9 +13,12 @@ namespace TypeRight.Formulas
     public static class MathmlInjector
     {
         /// <summary>注入成功返回 true；任何失败返回 false（调用方回落 Functions 路径）。
-        /// segStart/segLen/paraLen 用于判断片段在段中位置，InsertFile 插入完整段落后按需合并拆分。</summary>
+        /// segStart/segLen/paraLen 用于判断片段在段中位置，InsertFile 插入完整段落后按需合并拆分。
+        /// scratch：复用的隐藏草稿文档（批量转换时开一次、全程复用）；
+        /// null = 自开自关（旧行为，兼容单次调用）。频闪根因：每个公式 Documents.Open 一次
+        /// 临时文档会在用户窗口顶部队列闪现（实测 254 处公式 = 254 次开合 + ~150ms/个）。</summary>
         public static bool TryInject(Document doc, Range target, string mathml, string xslPath,
-            int segStart = -1, int segLen = 0, int paraLen = -1)
+            int segStart = -1, int segLen = 0, int paraLen = -1, Document scratch = null)
         {
             if (doc == null || target == null || string.IsNullOrEmpty(mathml)) return false;
             if (string.IsNullOrEmpty(xslPath) || !File.Exists(xslPath)) return false;
@@ -33,20 +36,27 @@ namespace TypeRight.Formulas
                 tempFile = Path.Combine(Path.GetTempPath(), "typeright-math-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".docx");
                 File.WriteAllBytes(tempFile, BuildMinimalDocx(mathElement));
 
-                // 3) 内联注入：临时文档承载公式 → FormattedText 赋值到目标区间（不引入段落边界）
-                NetOffice.WordApi.Document scratch = null;
+                // 3) 内联注入：草稿文档承载公式 → FormattedText 赋值到目标区间（不引入段落边界）
+                bool ownScratch = scratch == null;
                 try
                 {
-                    scratch = doc.Application.Documents.Open(tempFile);
+                    if (ownScratch)
+                    {
+                        scratch = doc.Application.Documents.Open(tempFile);
+                    }
+                    else if (!LoadIntoScratch(scratch, tempFile))
+                    {
+                        return false;
+                    }
                     Range src = scratch.Range(0, scratch.Content.End - 1);
                     target.FormattedText = src.FormattedText;
                 }
                 finally
                 {
-                    try { if (scratch != null) { scratch.Close(false); } } catch { }
+                    if (ownScratch) { try { scratch.Close(false); } catch { } }
                 }
 
-                // 4) 成功判据 + 合并段落拆分
+                // 4) 成功判据
                 try
                 {
                     if (target.OMaths.Count == 0)
@@ -56,8 +66,6 @@ namespace TypeRight.Formulas
                         probe.MoveEnd(NetOffice.WordApi.Enums.WdUnits.wdCharacter, 1);
                         if (probe.OMaths.Count == 0) return false;
                     }
-
-                    // FormattedText 不拆段，无需合并
                     return true;
                 }
                 catch { return false; }
@@ -70,6 +78,26 @@ namespace TypeRight.Formulas
             {
                 try { if (tempFile != null && File.Exists(tempFile)) File.Delete(tempFile); } catch { }
             }
+        }
+
+        /// <summary>把临时 docx 内容装进复用草稿：清空 → InsertFile → 删掉插入带来的多余尾段，
+        /// 保证草稿只剩"公式¶"一段（Range(0, End-1) 即纯公式内容，与自开路径等价）。</summary>
+        private static bool LoadIntoScratch(Document scratch, string tempFile)
+        {
+            try
+            {
+                scratch.Content.Delete();
+                scratch.Range(0, 0).InsertFile(tempFile);
+                int guard = 0;
+                while (scratch.Paragraphs.Count > 1 && guard++ < 5)
+                {
+                    Range tail = scratch.Range(scratch.Content.End - 1, scratch.Content.End);
+                    if ((tail.Text ?? "") != "\r") break;
+                    tail.Delete();
+                }
+                return scratch.Paragraphs.Count == 1;
+            }
+            catch { return false; }
         }
 
         /// <summary>

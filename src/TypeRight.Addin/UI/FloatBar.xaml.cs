@@ -23,13 +23,18 @@ namespace TypeRight.Addin.UI
     /// </summary>
     public partial class FloatBar : Window
     {
-        private static readonly double[] CommonSizes = { 8, 9, 10.5, 12, 14, 16, 18, 22, 26 };
+        /// <summary>Word"开始"选项卡字号列表（中西文常用字号全集；A± 沿此表步进）。</summary>
+        private static readonly double[] SizeSteps = { 5, 5.5, 6.5, 7.5, 8, 9, 10, 10.5, 11, 12, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36, 42, 48, 72 };
+
+        /// <summary>当前字号（样本锚点字号；每次应用后更新——"字号提示"）。</summary>
+        private double? _currentSizePt;
 
         private readonly TypeRightController _controller;
         private bool _suppressEvents;
         private bool _dragging;    // DragMove 模态移动中（此间 Esc 只取消拖动，不关闭会话）
         private bool _userMoved;   // 用户手动拖过：此后不再回弹到样本段落旁
         private Popup _colorPopup;
+        private Popup _sizePopup;
         private OfficeThemeKind _themeKind;
 
         public FloatBar(TypeRightController controller)
@@ -38,10 +43,6 @@ namespace TypeRight.Addin.UI
             InitializeComponent();
             _suppressEvents = false;
             _controller = controller;
-
-            CboSize.Items.Add(new SizeItem(null)); // “—” = 不改
-            foreach (double s in CommonSizes) CboSize.Items.Add(new SizeItem(s));
-            CboSize.SelectedIndex = 0;
 
             PreviewKeyDown += OnPreviewKeyDown;
             Deactivated += OnDeactivated;
@@ -343,8 +344,10 @@ namespace TypeRight.Addin.UI
             try
             {
                 CboFont.SelectedIndex = -1;
-                CboSize.SelectedIndex = 0;
                 BtnBold.IsChecked = false;
+                BtnItalic.IsChecked = false;
+                BtnUnderline.IsChecked = false;
+                BtnStrike.IsChecked = false;
                 ChkStrict.IsChecked = true;
                 ChkIgnoreSize.IsChecked = false;
                 ChkIgnoreColor.IsChecked = false;
@@ -355,6 +358,103 @@ namespace TypeRight.Addin.UI
                 SetColorStrip(null);
             }
             finally { _suppressEvents = false; }
+        }
+
+        /// <summary>会话样本信息 → 字号提示（样本单元首锚字号；NaN 未知显示 —）。</summary>
+        public void UpdateSampleInfo(FormatSignature sampleSig)
+        {
+            _currentSizePt = sampleSig.SizePt;
+            RefreshSizeDisplay();
+        }
+
+        private void RefreshSizeDisplay()
+        {
+            string t = _currentSizePt.HasValue ? _currentSizePt.Value.ToString("0.#") : "—";
+            var block = FindName("TxtSize") as TextBlock;
+            if (block != null && block.Text != t) block.Text = t;
+        }
+
+        /// <summary>应用字号并把提示刷成新值。</summary>
+        private void ApplySize(double pt)
+        {
+            _currentSizePt = pt;
+            RefreshSizeDisplay();
+            _controller.ApplyChanges(new FormatChanges { SizePt = pt });
+        }
+
+        private void OnSizeUp(object sender, RoutedEventArgs e)
+        {
+            StepSize(+1);
+        }
+
+        private void OnSizeDown(object sender, RoutedEventArgs e)
+        {
+            StepSize(-1);
+        }
+
+        /// <summary>沿 Word 字号表步进；表外值先吸附到相邻表项，超出表范围按 ±1 续步（夹在 [1,1638]）。</summary>
+        private void StepSize(int dir)
+        {
+            double cur = _currentSizePt ?? 10.5;
+            double next = double.NaN;
+            if (dir > 0)
+            {
+                foreach (double s in SizeSteps)
+                    if (s > cur + 0.01) { next = s; break; }
+                if (double.IsNaN(next)) next = Math.Min(1638, Math.Floor(cur) + 1);
+            }
+            else
+            {
+                for (int i = SizeSteps.Length - 1; i >= 0; i--)
+                    if (SizeSteps[i] < cur - 0.01) { next = SizeSteps[i]; break; }
+                if (double.IsNaN(next)) next = Math.Max(1, Math.Ceiling(cur) - 1);
+            }
+            if (!double.IsNaN(next) && Math.Abs(next - cur) >= 0.01)
+                ApplySize(next);
+        }
+
+        /// <summary>字号下拉（与颜色面板同款弹层，点选即应用）。</summary>
+        private void OnSizePopup(object sender, RoutedEventArgs e)
+        {
+            var panelBg = BrushOf("PopupBgBrush");
+            var panelBorder = BrushOf("PopupBorderBrush");
+            var accent = BrushOf("AccentBrush");
+            var textBrush = BrushOf("TextBrush");
+            var hoverBrush = BrushOf("ItemHoverBrush");
+
+            var grid = new UniformGrid { Columns = 5 };
+            foreach (double s in SizeSteps)
+            {
+                double val = s;
+                var item = new Border
+                {
+                    Background = Brushes.Transparent, CornerRadius = new CornerRadius(3),
+                    Margin = new Thickness(2), Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand,
+                    Child = new TextBlock
+                    {
+                        Text = val.ToString("0.#"), FontSize = 12.5,
+                        Foreground = _currentSizePt.HasValue && Math.Abs(_currentSizePt.Value - val) < 0.01
+                            ? accent : textBrush
+                    }
+                };
+                if (_currentSizePt.HasValue && Math.Abs(_currentSizePt.Value - val) < 0.01)
+                    item.Background = hoverBrush;
+                item.MouseLeftButtonUp += (s2, _) => { if (_sizePopup != null) _sizePopup.IsOpen = false; ApplySize(val); };
+                grid.Children.Add(item);
+            }
+
+            _sizePopup = new Popup
+            {
+                Child = new Border
+                {
+                    Background = panelBg, CornerRadius = new CornerRadius(3),
+                    BorderBrush = panelBorder, BorderThickness = new Thickness(1),
+                    Padding = new Thickness(5), Child = grid
+                },
+                PlacementTarget = BtnSize, Placement = PlacementMode.Bottom,
+                StaysOpen = false, AllowsTransparency = true
+            };
+            _sizePopup.IsOpen = true;
         }
 
         private void SetColorStrip(int? rgb)
@@ -414,24 +514,30 @@ namespace TypeRight.Addin.UI
             _controller.ApplyChanges(new FormatChanges { EastAsiaFont = font });
         }
 
-        private void OnSizeSelected(object sender, SelectionChangedEventArgs e)
-        {
-            if (_suppressEvents) return;
-            var item = CboSize.SelectedItem as SizeItem;
-            if (item == null || !item.SizePt.HasValue) return; // “—” = 不动
-            _controller.ApplyChanges(new FormatChanges { SizePt = item.SizePt });
-        }
-
         private void OnBoldToggled(object sender, RoutedEventArgs e)
         {
             if (_suppressEvents) return;
-            bool? bold = BtnBold.IsChecked;
-            if (bold == null || !bold.Value)
-            {
-                BtnBold.IsChecked = false; // 二态使用
-                return;
-            }
-            _controller.ApplyChanges(new FormatChanges { Bold = true });
+            // 二态开关：勾上=加粗，取消=取消加粗（旧版取消时静默不生效）
+            bool bold = BtnBold.IsChecked == true;
+            _controller.ApplyChanges(new FormatChanges { Bold = bold });
+        }
+
+        private void OnItalicToggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _controller.ApplyChanges(new FormatChanges { Italic = BtnItalic.IsChecked == true });
+        }
+
+        private void OnUnderlineToggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _controller.ApplyChanges(new FormatChanges { Underline = BtnUnderline.IsChecked == true });
+        }
+
+        private void OnStrikeToggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _controller.ApplyChanges(new FormatChanges { StrikeThrough = BtnStrike.IsChecked == true });
         }
 
         private void OnColorClick(object sender, RoutedEventArgs e)
@@ -543,18 +649,6 @@ namespace TypeRight.Addin.UI
         private void OnClose(object sender, RoutedEventArgs e)
         {
             _controller.CloseSession();
-        }
-
-        private sealed class SizeItem
-        {
-            public readonly double? SizePt;
-
-            public SizeItem(double? sizePt) { SizePt = sizePt; }
-
-            public override string ToString()
-            {
-                return SizePt.HasValue ? SizePt.Value.ToString("0.#") : "—";
-            }
         }
     }
 }

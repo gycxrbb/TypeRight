@@ -94,7 +94,7 @@ namespace TypeRight.Addin.Controllers
                     return;
                 }
 
-                var sig = FormatSignatureReader.Read(sample);
+                var sig = FormatSignatureReader.Read(sample, SimilarSelector.MathZoneRanges(doc));
                 TypeRightAddin.Log("SimilarSelect: sample sig = " + sig);
                 if (sig.IsEmpty)
                 {
@@ -154,11 +154,12 @@ namespace TypeRight.Addin.Controllers
                 // 样本单元自身必然命中，0 命中=异常：记录首几段状态便于现场诊断
                 try
                 {
+                    var diagZones = SimilarSelector.MathZoneRanges(_session.Doc);
                     int diag = 0;
                     foreach (Paragraph dp in _session.Doc.Paragraphs)
                     {
                         if (diag >= 6) break;
-                        FormatSignature ds = FormatSignatureReader.Read(dp);
+                        FormatSignature ds = FormatSignatureReader.Read(dp, diagZones);
                         if (ds.IsEmpty) continue;
                         TypeRightAddin.Log("  [0命中诊断] 段" + diag + " sig=" + ds);
                         diag++;
@@ -186,7 +187,10 @@ namespace TypeRight.Addin.Controllers
             _lastMatchCount = result.Count;
             _lastMatchDuration = result.Duration;
             if (_floatBar != null)
+            {
                 _floatBar.UpdateMatched(result.Count, result.Duration, result.SampleIsLead);
+                _floatBar.UpdateSampleInfo(result.SampleSignature);
+            }
 
             // 命中摘要：现场诊断"为什么被判同类"（样本签名 + 命中单元签名对比）
             try
@@ -430,6 +434,7 @@ namespace TypeRight.Addin.Controllers
 
             var report = new List<string>();
             var consumed = new HashSet<int>();
+            List<int[]> mathZones = SimilarSelector.MathZoneRanges(doc);   // 公式区感知（公式化过的文档方案回放不再错配）
 
             bool screenOff = false;
             try { App.ScreenUpdating = false; screenOff = true; } catch { }
@@ -450,7 +455,7 @@ namespace TypeRight.Addin.Controllers
                         int key;
                         try { key = p.Range.Start; } catch { continue; }
                         if (consumed.Contains(key)) continue;
-                        var sig = FormatSignatureReader.Read(p);
+                        var sig = FormatSignatureReader.Read(p, mathZones);
                         if (sig.IsEmpty) continue;
                         if (rule.Match.MatchesPara(sig)) hit.Add(p);
                     }
@@ -495,7 +500,7 @@ namespace TypeRight.Addin.Controllers
                 {
                     try
                     {
-                        var sig = FormatSignatureReader.Read(p);
+                        var sig = FormatSignatureReader.Read(p, mathZones);
                         if (!sig.IsEmpty && !consumed.Contains(p.Range.Start)) unmatched++;
                     }
                     catch { }
@@ -528,7 +533,10 @@ namespace TypeRight.Addin.Controllers
             _floatBar.ShowBar();
             // 首次会话浮条是刚创建的（RecomputeMatches 时还不存在），用会话里的真值补刷计数
             if (_session != null)
+            {
                 _floatBar.UpdateMatched(_lastMatchCount, _lastMatchDuration, _session != null && _session.SampleIsLead);
+                _floatBar.UpdateSampleInfo(_session.SampleSignature);
+            }
         }
 
         /// <summary>空闲时预建浮条（隐藏）：把 WPF 窗口初始化 + 字体列表装载

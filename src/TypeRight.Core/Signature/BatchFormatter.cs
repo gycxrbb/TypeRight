@@ -14,13 +14,19 @@ namespace TypeRight.Signature
         public string LatinFont;
         public double? SizePt;
         public bool? Bold;
+        public bool? Italic;
+        /// <summary>下划线：true=单实线，false=无。</summary>
+        public bool? Underline;
+        /// <summary>删除线。</summary>
+        public bool? StrikeThrough;
         public int? ColorRgb;
 
         public bool HasAny
         {
             get
             {
-                return EastAsiaFont != null || LatinFont != null || SizePt.HasValue || Bold.HasValue || ColorRgb.HasValue;
+                return EastAsiaFont != null || LatinFont != null || SizePt.HasValue || Bold.HasValue
+                    || Italic.HasValue || Underline.HasValue || StrikeThrough.HasValue || ColorRgb.HasValue;
             }
         }
     }
@@ -106,6 +112,9 @@ namespace TypeRight.Signature
                 if (c.LatinFont != null && !string.Equals(f.NameAscii, c.LatinFont, StringComparison.OrdinalIgnoreCase)) return true;
                 if (c.SizePt.HasValue && Math.Abs(f.Size - (float)c.SizePt.Value) > 0.05f) return true;
                 if (c.Bold.HasValue && f.Bold != (c.Bold.Value ? -1 : 0)) return true;
+                if (c.Italic.HasValue && f.Italic != (c.Italic.Value ? -1 : 0)) return true;
+                if (c.Underline.HasValue && f.Underline != (c.Underline.Value ? WdUnderline.wdUnderlineSingle : WdUnderline.wdUnderlineNone)) return true;
+                if (c.StrikeThrough.HasValue && f.StrikeThrough != (c.StrikeThrough.Value ? -1 : 0)) return true;
                 if (c.ColorRgb.HasValue && WordFormatUtils.WdColorToRgb((int)f.Color) != c.ColorRgb.Value) return true;
             }
             return false;
@@ -140,11 +149,21 @@ namespace TypeRight.Signature
                     WordFormatUtils.SetIfChanged(() => f.Size, v => f.Size = v, (float)c.SizePt.Value, WordFormatUtils.FloatEq);
                 if (c.Bold.HasValue)
                     WordFormatUtils.SetIfChanged(() => f.Bold, v => f.Bold = v, c.Bold.Value ? -1 : 0, WordFormatUtils.IntEq);
+                if (c.Italic.HasValue)
+                    WordFormatUtils.SetIfChanged(() => f.Italic, v => f.Italic = v, c.Italic.Value ? -1 : 0, WordFormatUtils.IntEq);
+                if (c.Underline.HasValue)
+                    WordFormatUtils.SetIfChanged(() => f.Underline, v => f.Underline = v,
+                        c.Underline.Value ? WdUnderline.wdUnderlineSingle : WdUnderline.wdUnderlineNone, (a, b) => a == b);
+                if (c.StrikeThrough.HasValue)
+                    WordFormatUtils.SetIfChanged(() => f.StrikeThrough, v => f.StrikeThrough = v, c.StrikeThrough.Value ? -1 : 0, WordFormatUtils.IntEq);
                 if (c.ColorRgb.HasValue)
                     WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
                         (WdColor)WordFormatUtils.RgbToWdColor(c.ColorRgb.Value), (a, b) => a == b);
 
-                if (guardSize)
+                // 字号护栏只在没有显式字号改动时启用：
+                // 护栏的本意是"改字体时防止 rPr 丢 w:sz"，但它会把刚写入的新字号回写成旧值
+                // （实测：字号 +N 后视觉无变化，日志"实际改动 24"但重选签名仍 9pt）。
+                if (guardSize && !c.SizePt.HasValue)
                 {
                     // 无条件回写：rPr 在序列化时可能丢弃 w:sz（API 读不出），已知字号一律显式回写
                     try { f.Size = beforeSize; } catch { }
@@ -361,11 +380,19 @@ namespace TypeRight.Signature
                 changed |= WordFormatUtils.SetIfChanged(() => f.Size, v => f.Size = v, (float)c.SizePt.Value, WordFormatUtils.FloatEq);
             if (c.Bold.HasValue)
                 changed |= WordFormatUtils.SetIfChanged(() => f.Bold, v => f.Bold = v, c.Bold.Value ? -1 : 0, WordFormatUtils.IntEq);
+            if (c.Italic.HasValue)
+                changed |= WordFormatUtils.SetIfChanged(() => f.Italic, v => f.Italic = v, c.Italic.Value ? -1 : 0, WordFormatUtils.IntEq);
+            if (c.Underline.HasValue)
+                changed |= WordFormatUtils.SetIfChanged(() => f.Underline, v => f.Underline = v,
+                    c.Underline.Value ? WdUnderline.wdUnderlineSingle : WdUnderline.wdUnderlineNone, (a, b) => a == b);
+            if (c.StrikeThrough.HasValue)
+                changed |= WordFormatUtils.SetIfChanged(() => f.StrikeThrough, v => f.StrikeThrough = v, c.StrikeThrough.Value ? -1 : 0, WordFormatUtils.IntEq);
             if (c.ColorRgb.HasValue)
                 changed |= WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
                     (WdColor)WordFormatUtils.RgbToWdColor(c.ColorRgb.Value), (a, b) => a == b);
 
-            if (guardSize)
+            // 同 ApplyToParagraph：显式改字号时护栏不回写（否则新字号被旧值覆盖）
+            if (guardSize && !c.SizePt.HasValue)
             {
                 try { f.Size = beforeSize; } catch { }
             }

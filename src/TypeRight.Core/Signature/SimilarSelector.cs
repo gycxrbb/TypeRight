@@ -56,7 +56,7 @@ namespace TypeRight.Signature
             bool sampleInTable = false;
             try { sampleInTable = IsInTable(doc, sampleParagraph.Range.Start); }
             catch { }
-            return Match(doc, FormatSignatureReader.Read(sampleParagraph), ignore, sampleInTable);
+            return Match(doc, FormatSignatureReader.Read(sampleParagraph, MathZoneRanges(doc)), ignore, sampleInTable);
         }
 
         /// <summary>全文表格区间（[start,end) 列表）。正文/表格分区不再用
@@ -77,6 +77,9 @@ namespace TypeRight.Signature
             return ranges;
         }
 
+        /// <summary>全文表格区间（供公式转换等模块及验收诊断复用；位置判定替代 wdWithInTable）。</summary>
+        public static List<int[]> TableRangesOf(Document doc) { return TableRanges(doc); }
+
         private static bool IsInTable(List<int[]> tableRanges, int position)
         {
             foreach (int[] r in tableRanges)
@@ -96,11 +99,35 @@ namespace TypeRight.Signature
             catch { return false; }
         }
 
+        /// <summary>全文公式区（OMML）[start,end) 列表（一次构建，供签名读取器跳过公式区锚点）。
+        /// 无公式返回 null（零开销快路径）。</summary>
+        public static List<int[]> MathZoneRanges(Document doc)
+        {
+            try
+            {
+                int count = doc.OMaths.Count;
+                if (count == 0) return null;
+                var zones = new List<int[]>(count);
+                for (int i = 1; i <= count; i++)
+                {
+                    try { Range mr = doc.OMaths[i].Range; zones.Add(new[] { mr.Start, mr.End }); }
+                    catch { }
+                }
+                zones.Sort((a, b) => a[0].CompareTo(b[0]));
+                return zones;
+            }
+            catch { return null; }
+        }
+
         // ───────── 引导句感知单元匹配（方案1） ─────────
 
-        /// <summary>检测段内引导句边界：引导句 = 行首与首锚格式（字号/加粗/颜色）一致的
-        /// 最长前缀。均匀段返回 -1。字体不参与边界判定（Font.Name* 读取抖动）。</summary>
-        public static int DetectLeadBoundary(Paragraph p, FormatSignature paraSig)
+        /// <summary>检测段内引导句边界：引导句 = 行首起与首锚格式（字号/加粗/颜色）一致的
+        /// 最长前缀，边界 = 首个不一致的可见字符位置（文档坐标）。均匀段/拆不出边界返回 -1。
+        /// 字体不参与边界判定（Font.Name* 读取抖动）；公式区字符透明跳过（区内读数为数学字体值）。
+        /// 定位用顺序逐字符扫描（上限 600 探针）：二分假设"引导区连续前缀"，
+        /// 公式化后的段（zone 跳读 + 段中岛状格式）不满足单调性——二分会越过真实边界
+        /// 把正文头几字并进引导单元（引导签名被污染掉队），或整段误判拆不出边界。</summary>
+        public static int DetectLeadBoundary(Paragraph p, FormatSignature paraSig, List<int[]> mathZones = null)
         {
             if (paraSig.IsUniform) return -1;
             try
@@ -108,26 +135,34 @@ namespace TypeRight.Signature
                 Range whole = p.Range;
                 int paraStart = whole.Start;
                 string text = whole.Text ?? "";
-                int firstIdx = FormatSignatureReader.FirstVisibleIndex(text, 0);
-                int lastIdx = FormatSignatureReader.LastVisibleIndex(text);
+                int firstIdx = FormatSignatureReader.FirstVisibleIndex(text, 0, paraStart, mathZones);
+                int lastIdx = FormatSignatureReader.LastVisibleIndex(text, paraStart, mathZones);
                 if (firstIdx < 0 || lastIdx <= firstIdx) return -1;
 
-                // 二分找首个"非引导格式"的可见字符（引导区为连续前缀）
-                int lo = firstIdx, hi = lastIdx;   // 不变量：idx<=lo 为引导格式；idx>=hi 非引导
                 Document doc = whole.Document;
-                int iters = 0;
-                while (hi - lo > 1)
+                int pos = firstIdx, probes = 0;
+                while (pos < lastIdx && probes++ < 600)
                 {
-                    if (++iters > 40) break;   // 保险丝（二分 ~log2 应 <10）
-                    int mid = lo + (hi - lo) / 2;
-                    int probe = mid, guard = 0;
-                    while (probe < lastIdx && guard++ < 4 && FormatSignatureReader.IsSkippable(text, probe)) probe++;
-                    if (probe >= lastIdx) { hi = lastIdx; break; }
-                    if (CharMatchesLead(doc, paraStart + probe, paraSig)) lo = probe;
-                    else hi = probe;
+                    // 跳过空白与公式区字符（公式区属正文语流，不当边界判据）
+                    int probe = pos, guard = 0;
+                    while (probe < lastIdx && guard++ < 16)
+                    {
+                        if (FormatSignatureReader.InMathZone(mathZones, paraStart + probe))
+                        {
+                            int nz = FormatSignatureReader.SkipMathForward(mathZones, paraStart + probe) - paraStart;
+                            if (nz <= probe) break;
+                            probe = nz;
+                            continue;
+                        }
+                        if (!FormatSignatureReader.IsSkippable(text, probe)) break;
+                        probe++;
+                    }
+                    if (probe >= lastIdx) break;
+                    if (!CharMatchesLead(doc, paraStart + probe, paraSig))
+                        return paraStart + probe;   // 首个非引导格式字符 = 精确边界
+                    pos = probe + 1;
                 }
-                if (hi >= lastIdx) return -1;   // 全段皆引导格式（视作均匀）
-                return paraStart + hi;
+                return -1;   // 扫到底皆为引导格式（视作均匀）
             }
             catch { return -1; }
         }
@@ -149,7 +184,9 @@ namespace TypeRight.Signature
         }
 
         /// <summary>引导句感知全文匹配：sampleOffset = 光标在样本段内的字符偏移，
-        /// 决定样本单元是引导句还是正文。均匀段落单元=整段（行为与段落级匹配一致）。</summary>
+        /// 决定样本单元是引导句还是正文。均匀段落单元=整段（行为与段落级匹配一致）。
+        /// 签名读取全程公式区感知（mathZones 一次构建）：公式化后的"文字+公式"混合段
+        /// 锚点只取文字部分，不再被数学字体读数污染（用户实测：公式化后 24 处同类只剩 7 处）。</summary>
         public static UnitMatchResult MatchUnits(Document doc, Paragraph sampleParagraph, int sampleOffset,
             FormatSignature.IgnoreDims ignore)
         {
@@ -158,17 +195,18 @@ namespace TypeRight.Signature
             if (doc == null || sampleParagraph == null) return result;
 
             bool sampleInTable = IsInTable(doc, sampleParagraph);
+            List<int[]> mathZones = MathZoneRanges(doc);
 
             // 样本单元与签名
-            FormatSignature sampleParaSig = FormatSignatureReader.Read(sampleParagraph);
+            FormatSignature sampleParaSig = FormatSignatureReader.Read(sampleParagraph, mathZones);
             if (sampleParaSig.IsEmpty) return result;
-            int leadBoundary = DetectLeadBoundary(sampleParagraph, sampleParaSig);
+            int leadBoundary = DetectLeadBoundary(sampleParagraph, sampleParaSig, mathZones);
             int paraStart = sampleParagraph.Range.Start;
             bool sampleIsLead = leadBoundary >= 0 && sampleOffset >= 0 && sampleOffset < leadBoundary - paraStart;
             result.SampleIsLead = sampleIsLead;
 
             Range sampleUnitRange = UnitRange(doc, sampleParagraph, leadBoundary, sampleIsLead);
-            FormatSignature sampleSig = FormatSignatureReader.ReadRange(sampleUnitRange);
+            FormatSignature sampleSig = FormatSignatureReader.ReadRange(sampleUnitRange, mathZones);
             if (sampleSig.IsEmpty) return result;
             result.SampleSignature = sampleSig;
 
@@ -179,7 +217,7 @@ namespace TypeRight.Signature
                 try { pStart = p.Range.Start; } catch { continue; }
                 if (IsInTable(tableRanges, pStart) != sampleInTable) continue;
 
-                FormatSignature sig = FormatSignatureReader.Read(p);
+                FormatSignature sig = FormatSignatureReader.Read(p, mathZones);
                 if (sig.IsEmpty) continue;
 
                 if (sig.IsUniform)
@@ -196,7 +234,7 @@ namespace TypeRight.Signature
                 bool bodyPossible = sig.LastAnchorMatches(sampleSig, ignore);
                 if (!leadPossible && !bodyPossible) continue;
 
-                int boundary = DetectLeadBoundary(p, sig);
+                int boundary = DetectLeadBoundary(p, sig, mathZones);
                 if (boundary < 0)
                 {
                     // 拆不出引导句（如全段皆首锚格式）：按整段处理
@@ -206,13 +244,13 @@ namespace TypeRight.Signature
                 }
                 if (leadPossible)
                 {
-                    FormatSignature leadSig = FormatSignatureReader.ReadRange(doc.Range(pStart, boundary));
+                    FormatSignature leadSig = FormatSignatureReader.ReadRange(doc.Range(pStart, boundary), mathZones);
                     if (!leadSig.IsEmpty && leadSig.Matches(sampleSig, ignore))
                         result.Units.Add(new MatchUnit { Paragraph = p, Start = pStart, End = boundary, IsLead = true, Signature = leadSig });
                 }
                 if (bodyPossible)
                 {
-                    FormatSignature bodySig = FormatSignatureReader.ReadRange(doc.Range(boundary, p.Range.End));
+                    FormatSignature bodySig = FormatSignatureReader.ReadRange(doc.Range(boundary, p.Range.End), mathZones);
                     if (!bodySig.IsEmpty && bodySig.Matches(sampleSig, ignore))
                         result.Units.Add(new MatchUnit { Paragraph = p, Start = boundary, End = p.Range.End, IsLead = false, Signature = bodySig });
                 }
@@ -234,7 +272,7 @@ namespace TypeRight.Signature
             return doc.Range(start, end);
         }
 
-        /// <summary>样本签名 → 全文匹配（分区：sampleInTable 决定命中文本域）。</summary>
+        /// <summary>样本签名 → 全文匹配（分区：sampleInTable 决定命中文本域）。公式区感知。</summary>
         public static SimilarMatchResult Match(Document doc, FormatSignature sample, FormatSignature.IgnoreDims ignore, bool sampleInTable = false)
         {
             var watch = Stopwatch.StartNew();
@@ -242,6 +280,7 @@ namespace TypeRight.Signature
             if (doc == null || sample.IsEmpty) return result;
 
             List<int[]> tableRanges = TableRanges(doc);
+            List<int[]> mathZones = MathZoneRanges(doc);
 
             Paragraphs paragraphs = doc.Paragraphs;
             int count = paragraphs.Count;
@@ -257,7 +296,7 @@ namespace TypeRight.Signature
                 try { start = p.Range.Start; } catch { }
                 if (start < 0) continue;
                 if (IsInTable(tableRanges, start) != sampleInTable) continue;   // 正文/表格分区
-                FormatSignature s = FormatSignatureReader.Read(p);
+                FormatSignature s = FormatSignatureReader.Read(p, mathZones);
                 if (s.IsEmpty) continue;          // 空段/无可见文本不参与
                 if (s.Matches(sample, ignore)) result.Paragraphs.Add(p);
             }

@@ -14,11 +14,14 @@ namespace TypeRight.Formatting
     {
         public int Converted;
         public int Failed;
+        /// <summary>整程耗时（毫秒）——性能回归观测用。</summary>
+        public long ElapsedMs;
         public readonly List<string> FailedLocations = new List<string>();
 
         public string SummaryText()
         {
-            return "已转换 " + Converted + " 处，失败 " + Failed + " 处" + (Failed > 0 ? "（失败片段已原样保留）" : "");
+            return "已转换 " + Converted + " 处，失败 " + Failed + " 处" + (Failed > 0 ? "（失败片段已原样保留）" : "")
+                + (ElapsedMs > 0 ? "，" + (ElapsedMs / 1000.0).ToString("0.0") + "s" : "");
         }
     }
 
@@ -78,72 +81,111 @@ namespace TypeRight.Formatting
             return null;
         }
 
-        /// <summary>转换整个文档（正文段落 + 表格单元格；已是公式对象的区间自动跳过，保证幂等）。</summary>
+        /// <summary>转换整个文档（正文段落 + 表格单元格；已是公式对象的区间自动跳过，保证幂等）。
+        /// 性能/观感：全程复用一个隐藏草稿文档注入公式（旧行为每个公式 Documents.Open 一次临时文档，
+        /// 254 处公式 = 254 次窗口开合：顶部频闪 + ~150ms/个的开销）。</summary>
         public FormulaStats ConvertDocument()
         {
             var stats = new FormulaStats();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
 
-            // 纯文本区间（数学区外 gap）精确定位：gap 是纯文本，字符串偏移 = 文档位置，零漂移。
-            // 每轮：取段落的所有 gap → 在 gap 文本内找片段 → 转该 gap 的最后一个片段 → 重扫。
-            // 数学区线性文本天然在 gap 之外，永不重复转换；拆分残留段的尾部文本在 gap 内，天然被覆盖。
-            // 单遍逐段：每段取纯文本 gap，gap 内片段降序转换（每转一个重读该 gap 保位置精确）。
-            // FormattedText 注入不拆段 → 无残留、无重复，无需外层重扫与空段清理。
-            foreach (Paragraph p in _doc.Paragraphs)
+            // 表格区间（位置判定，替代逐段 wdWithInTable——该调用进程内偶发假值且逐段开销大）
+            List<int[]> tableRanges = TypeRight.Signature.SimilarSelector.TableRangesOf(_doc);
+
+            // 隐藏草稿文档（Visible=false，不生成窗口）：批量注入的公式载体
+            Document scratch = null;
+            try
             {
                 try
                 {
-                    bool convertedHere = true;
-                    int localGuard = 0;
-                    while (convertedHere && localGuard++ < 30)
+                    scratch = _doc.Application.Documents.Add(
+                        System.Reflection.Missing.Value, System.Reflection.Missing.Value,
+                        System.Reflection.Missing.Value, false);
+                }
+                catch { scratch = null; }
+
+                foreach (Paragraph p in _doc.Paragraphs)
+                {
+                    bool convertedHere = false;
+                    try
                     {
-                        convertedHere = false;
-                        foreach (Range gap in TextGapsExcludingMath(p))
+                        bool loop = true;
+                        int localGuard = 0;
+                        while (loop && localGuard++ < 30)
                         {
-                            string gapText;
-                            try { gapText = gap.Text ?? ""; }
-                            catch { continue; }
-                            string trimmed = gapText.TrimEnd('\r', '\a', '\v');
-                            if (trimmed.Trim().Length == 0) continue;
-
-                            var segs = MathSegmenter.FindSegments(trimmed);
-                            if (segs.Count == 0) continue;
-
-                            // gap 内最后一个片段（前面片段位置不受影响；若它失败则转倒数第二个，以此类推）
-                            for (int si = segs.Count - 1; si >= 0; si--)
+                            loop = false;
+                            foreach (Range gap in TextGapsExcludingMath(p))
                             {
-                                var seg = segs[si];
-                                try
+                                string gapText;
+                                try { gapText = gap.Text ?? ""; }
+                                catch { continue; }
+                                string trimmed = gapText.TrimEnd('\r', '\a', '\v');
+                                if (trimmed.Trim().Length == 0) continue;
+
+                                var segs = MathSegmenter.FindSegments(trimmed);
+                                if (segs.Count == 0) continue;
+
+                                // gap 内最后一个片段（前面片段位置不受影响；若它失败则转倒数第二个，以此类推）
+                                for (int si = segs.Count - 1; si >= 0; si--)
                                 {
-                                    Range rng = gap.Duplicate;
-                                    rng.Start = gap.Start + seg.Start;
-                                    rng.End = rng.Start + seg.Length;
-                                    if (TryConvertRange(rng, seg.Text, false, seg.Start, seg.Length, trimmed.Length))
+                                    var seg = segs[si];
+                                    try
                                     {
-                                        stats.Converted++;
-                                        convertedHere = true;
-                                        break;
+                                        Range rng = gap.Duplicate;
+                                        rng.Start = gap.Start + seg.Start;
+                                        rng.End = rng.Start + seg.Length;
+                                        if (TryConvertRange(rng, seg.Text, false, seg.Start, seg.Length, trimmed.Length, scratch))
+                                        {
+                                            stats.Converted++;
+                                            loop = true;
+                                            convertedHere = true;
+                                            break;
+                                        }
+                                        stats.Failed++;
+                                        if (stats.FailedLocations.Count < 50)
+                                            stats.FailedLocations.Add("¶" + ParagraphIndex(p) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
                                     }
-                                    stats.Failed++;
-                                    if (stats.FailedLocations.Count < 50)
-                                        stats.FailedLocations.Add("¶" + ParagraphIndex(p) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
+                                    catch { }
                                 }
-                                catch { }
+                                if (loop) break;
                             }
-                            if (convertedHere) break;
                         }
                     }
-                }
-                catch { }
+                    catch { }
 
-                // TC-20（P0）：公式构建重写单元格 run 的 rPr，对表格段非公式 run 强制显式回写
-                try
-                {
-                    bool inTbl = Convert.ToBoolean(p.Range.get_Information(WdInformation.wdWithInTable));
-                    if (inTbl) ForceExplicitRunProps(p);
+                    // TC-20（P0）：公式构建会重写单元格 run 的 rPr——只对"表格内且确有公式"的段
+                    // 强制显式回写（旧行为对全部表格段都做，纯表格段是无效开销）
+                    try
+                    {
+                        if (convertedHere || HasMathZone(p))
+                        {
+                            int ps = p.Range.Start;
+                            if (InRanges(tableRanges, ps)) ForceExplicitRunProps(p);
+                        }
+                    }
+                    catch { }
                 }
-                catch { }
             }
+            finally
+            {
+                if (scratch != null) { try { scratch.Close(false); } catch { } }
+            }
+            watch.Stop();
+            stats.ElapsedMs = watch.ElapsedMilliseconds;
             return stats;
+        }
+
+        private static bool HasMathZone(Paragraph p)
+        {
+            try { return p.Range.OMaths.Count > 0; } catch { return false; }
+        }
+
+        private static bool InRanges(List<int[]> ranges, int pos)
+        {
+            if (ranges == null) return false;
+            foreach (int[] r in ranges)
+                if (pos >= r[0] && pos < r[1]) return true;
+            return false;
         }
 
 
@@ -448,8 +490,8 @@ namespace TypeRight.Formatting
             catch { return -1; }
         }
 
-        /// <summary>单个片段的转换。失败时尽力还原原文并返回 false。</summary>
-        private bool TryConvertRange(Range rng, string originalText, bool secondPass = false, int segStart = -1, int segLen = 0, int paraLen = -1)
+        /// <summary>单个片段的转换。失败时尽力还原原文并返回 false。scratch：复用草稿（可空）。</summary>
+        private bool TryConvertRange(Range rng, string originalText, bool secondPass = false, int segStart = -1, int segLen = 0, int paraLen = -1, Document scratch = null)
         {
             // 边缘悬挂括号剥离：尾部悬 ( [（后随中文说明被切开的场景）与头部悬 ) 剥掉再判平衡；
             // 剥离后仍不平衡（如 y = a(x - h）才判失败保留原文（TC-11）
@@ -466,8 +508,8 @@ namespace TypeRight.Formatting
 
             try
             {
-                // TC-19 管线（PRD §6.2.1）：MathML → 剪贴板 → 粘贴注入（嵌套结构完整）
-                // 二遍清扫不用剪贴板（漂移场景复发），直接走确定性 Functions/BuildUp 路径
+                // TC-19 管线（PRD §6.2.1）：MathML → 草稿文档 → FormattedText 注入（嵌套结构完整）
+                // 二遍清扫不用草稿（漂移场景复发），直接走确定性 Functions/BuildUp 路径
                 if (!secondPass && !string.IsNullOrEmpty(_mml2OmmlPath))
                 {
                     string mml = null;
@@ -475,7 +517,7 @@ namespace TypeRight.Formatting
                     catch (Exception bex) { RecordFallback("BUILD:" + mapped + " @" + bex.Message); }
                     if (mml != null)
                     {
-                        if (MathmlInjector.TryInject(_doc, rng, mml, _mml2OmmlPath, segStart, segLen, paraLen)) return true;
+                        if (MathmlInjector.TryInject(_doc, rng, mml, _mml2OmmlPath, segStart, segLen, paraLen, scratch)) return true;
                         RecordFallback("INJECT:" + mapped);
                     }
                 }

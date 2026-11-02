@@ -2,7 +2,7 @@
 <Window x:Class="TypeRight.Addin.UI.FloatBar"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="TypeRight" Width="556" SizeToContent="Height"
+        Title="TypeRight" Width="622" SizeToContent="Height"
         WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="True"
         Topmost="False" AllowsTransparency="True" Background="Transparent"
         Focusable="False" FontFamily="Segoe UI"
@@ -244,19 +244,42 @@
 
             <Separator Background="{DynamicResource SeparatorBrush}" Height="1" Margin="0,8,0,8"/>
 
-            <!-- 第 2 行：中文 [字体▾]  字号 [字号▾]  B  A颜色▾ -->
+            <!-- 第 2 行：中文 [字体▾]  字号 [A⁻][当前值▾][A⁺]  B I U S  A颜色▾（对齐 Word"开始"字体组） -->
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="中文" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
                            VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox x:Name="CboFont" Style="{StaticResource TyCombo}" MinWidth="200"
+                <ComboBox x:Name="CboFont" Style="{StaticResource TyCombo}" MinWidth="180"
                           SelectionChanged="OnFontSelected" VerticalAlignment="Center"/>
                 <TextBlock Text="字号" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}"
-                           VerticalAlignment="Center" Margin="12,0,6,0"/>
-                <ComboBox x:Name="CboSize" Style="{StaticResource TyCombo}" Width="68"
-                          SelectionChanged="OnSizeSelected" VerticalAlignment="Center"/>
+                           VerticalAlignment="Center" Margin="10,0,6,0"/>
+                <Button x:Name="BtnSizeDown" Style="{StaticResource TyPlain}" Content="A⁻" FontSize="11"
+                        Width="26" Height="28" Click="OnSizeDown" ToolTip="减小字号" VerticalAlignment="Center"/>
+                <Button x:Name="BtnSize" Style="{StaticResource TyPlain}" Width="56" Height="28" Margin="2,0,2,0"
+                        Click="OnSizePopup" ToolTip="选择字号" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="TxtSize" Text="—" FontSize="12.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                        <Path Data="M0,0 L3.5,3.5 7,0" Stroke="{DynamicResource TextSecondaryBrush}"
+                              StrokeThickness="1.4" Margin="7,5,0,0"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="BtnSizeUp" Style="{StaticResource TyPlain}" Content="A⁺" FontSize="11"
+                        Width="26" Height="28" Click="OnSizeUp" ToolTip="增大字号" VerticalAlignment="Center"/>
                 <ToggleButton x:Name="BtnBold" Style="{StaticResource TyToggle}" Content="B"
                               FontSize="13" FontWeight="Bold" Width="30" Height="28"
                               Margin="10,0,0,0" Click="OnBoldToggled" VerticalAlignment="Center"/>
+                <ToggleButton x:Name="BtnItalic" Style="{StaticResource TyToggle}" Width="30" Height="28"
+                              Margin="4,0,0,0" Click="OnItalicToggled" ToolTip="斜体" VerticalAlignment="Center">
+                    <TextBlock Text="I" FontSize="13" FontStyle="Italic" FontWeight="SemiBold"/>
+                </ToggleButton>
+                <ToggleButton x:Name="BtnUnderline" Style="{StaticResource TyToggle}" Width="30" Height="28"
+                              Margin="4,0,0,0" Click="OnUnderlineToggled" ToolTip="下划线" VerticalAlignment="Center">
+                    <TextBlock Text="U" FontSize="13" FontWeight="SemiBold" TextDecorations="Underline"/>
+                </ToggleButton>
+                <ToggleButton x:Name="BtnStrike" Style="{StaticResource TyToggle}" Width="30" Height="28"
+                              Margin="4,0,0,0" Click="OnStrikeToggled" ToolTip="删除线" VerticalAlignment="Center">
+                    <TextBlock Text="S" FontSize="13" FontWeight="SemiBold" TextDecorations="Strikethrough"/>
+                </ToggleButton>
                 <Button x:Name="BtnColor" Style="{StaticResource TyPlain}" Width="40" Height="28"
                         Margin="6,0,0,0" Click="OnColorClick" ToolTip="字体颜色" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal">

@@ -52,6 +52,7 @@ namespace TypeRight.Profiles
         private static List<ParaEntry> CollectParas(Document doc, HashSet<int> consumed)
         {
             var list = new List<ParaEntry>();
+            var mathZones = TypeRight.Signature.SimilarSelector.MathZoneRanges(doc);   // 公式区感知：公式化过的文档回放不再错配
             foreach (Paragraph p in doc.Paragraphs)
             {
                 try
@@ -59,7 +60,7 @@ namespace TypeRight.Profiles
                     var e = new ParaEntry { Paragraph = p };
                     e.Start = p.Range.Start;
                     e.InTable = Convert.ToBoolean(p.Range.get_Information(NetOffice.WordApi.Enums.WdInformation.wdWithInTable));
-                    e.Sig = FormatSignatureReader.Read(p);
+                    e.Sig = FormatSignatureReader.Read(p, mathZones);
                     if (!e.Sig.IsEmpty) list.Add(e);
                 }
                 catch { }

@@ -76,13 +76,13 @@ namespace TypeRight.Signature
                 ColorRgb < 0 ? "自动" : ColorRgb.ToString("X6"),
                 ItalicRaw,
                 Alignment);
-            if (IsUniform && MiddleUniform(sig: this)) return head;
+            if (IsUniform && MiddleUniform()) return head;
             string tail = IsUniform ? "" : string.Format(" ⇄尾 {0}/{1} {2}pt B={3} #{4}",
                 LastEastAsiaFont ?? "?", LastLatinFont ?? "?",
                 double.IsNaN(LastSizePt) ? "?" : LastSizePt.ToString("0.#"),
                 LastBoldRaw == -1 ? 1 : (LastBoldRaw == 0 ? 0 : -1),
                 LastColorRgb < 0 ? "自动" : LastColorRgb.ToString("X6"));
-            if (MiddleUniform(this)) return head + tail;
+            if (MiddleUniform()) return head + tail;
             var sb = new System.Text.StringBuilder(" ⋯中");
             foreach (FormatSignature.AnchorExtra e in ExtraAnchors)
             {
@@ -92,14 +92,15 @@ namespace TypeRight.Signature
             return head + tail + sb;
         }
 
-        /// <summary>中段采样点是否都与首锚一致（展示用）。</summary>
-        private bool MiddleUniform(FormatSignature sig)
+        /// <summary>中段采样点是否都与首锚一致（公式区污染检测：中段读到公式区内部
+        /// 字体值时为 false——正常"文字+公式"段在公式区感知下应为 true）。</summary>
+        public bool MiddleUniform()
         {
-            if (sig.ExtraAnchors == null) return true;
-            foreach (FormatSignature.AnchorExtra e in sig.ExtraAnchors)
+            if (ExtraAnchors == null) return true;
+            foreach (FormatSignature.AnchorExtra e in ExtraAnchors)
             {
-                if (!SizePtEquals(e.Size, sig.SizePt) || !BoldEquals(e.Bold, sig.BoldRaw) ||
-                    !ColorEquals(e.Color, sig.ColorRgb)) return false;   // 字体不比（读取抖动）
+                if (!SizePtEquals(e.Size, SizePt) || !BoldEquals(e.Bold, BoldRaw) ||
+                    !ColorEquals(e.Color, ColorRgb)) return false;   // 字体不比（读取抖动）
             }
             return true;
         }
@@ -243,17 +244,19 @@ namespace TypeRight.Signature
         private static long Delta(long start) { return Now() - start; }
 
         /// <summary>任意子区间（引导句/正文单元）的签名：锚点在区间内的首/末可见字符与中段采样。
-        /// 与段落级 Read 同一套锚点语义，供"引导句感知"单元匹配使用。</summary>
-        public static FormatSignature ReadRange(Range range)
+        /// 与段落级 Read 同一套锚点语义，供"引导句感知"单元匹配使用。
+        /// mathZones：文档级公式区 [start,end) 列表——锚点不得落在公式区内
+        /// （公式区内部字符的字体读数是数学字体值，会污染签名导致公式化后的段落互相匹配不上）。</summary>
+        public static FormatSignature ReadRange(Range range, List<int[]> mathZones = null)
         {
             if (range == null) return EmptySig();
             try
             {
                 string text = range.Text ?? "";
                 int basePos = range.Start;
-                int firstIdx = FirstVisibleIndex(text, 0);
+                int firstIdx = FirstVisibleIndex(text, 0, basePos, mathZones);
                 if (firstIdx < 0) return EmptySig();
-                int lastIdx = LastVisibleIndex(text);
+                int lastIdx = LastVisibleIndex(text, basePos, mathZones);
                 if (lastIdx <= firstIdx) lastIdx = firstIdx;
 
                 var sig = new FormatSignature
@@ -289,7 +292,18 @@ namespace TypeRight.Signature
                 {
                     int idx = firstIdx + (int)Math.Round((lastIdx - firstIdx) * 0.25 * (k + 1));
                     int guard = 0;
-                    while (idx < lastIdx && guard++ < 4 && IsSkippable(text, idx)) idx++;
+                    while (idx < lastIdx && guard++ < 8)
+                    {
+                        if (InMathZone(mathZones, basePos + idx))
+                        {
+                            int nz = SkipMathForward(mathZones, basePos + idx) - basePos;
+                            if (nz <= idx) break;
+                            idx = nz;
+                            continue;
+                        }
+                        if (!IsSkippable(text, idx)) break;
+                        idx++;
+                    }
                     if (idx <= firstIdx || idx >= lastIdx)
                         extras[k] = FirstAnchorOf(sig);
                     else
@@ -299,6 +313,40 @@ namespace TypeRight.Signature
                 return sig;
             }
             catch { return EmptySig(); }
+        }
+
+        // ---- 公式区感知（mathZones 为文档级 OMML 区间 [start,end)，排序后传入；null=全文无公式）----
+
+        /// <summary>文档位置是否在公式区内。</summary>
+        internal static bool InMathZone(List<int[]> zones, int pos)
+        {
+            if (zones == null) return false;
+            for (int i = 0; i < zones.Count; i++)
+            {
+                int[] z = zones[i];
+                if (pos >= z[0] && pos < z[1]) return true;
+                if (z[0] > pos) break;   // 已排序，后面更远
+            }
+            return false;
+        }
+
+        /// <summary>把位置推进到公式区之后（连续多区跳完为止）。</summary>
+        internal static int SkipMathForward(List<int[]> zones, int pos)
+        {
+            if (zones == null) return pos;
+            bool moved = true;
+            int guard = 0;
+            while (moved && guard++ < 16)
+            {
+                moved = false;
+                for (int i = 0; i < zones.Count; i++)
+                {
+                    int[] z = zones[i];
+                    if (pos >= z[0] && pos < z[1]) { pos = z[1]; moved = true; break; }
+                    if (z[0] > pos) break;
+                }
+            }
+            return pos;
         }
 
         internal static bool IsSkippable(string text, int idx)
@@ -322,11 +370,35 @@ namespace TypeRight.Signature
             return -1;
         }
 
+        /// <summary>公式区感知版：跳过空白与公式区字符，返回首个可充当锚点的字符下标。</summary>
+        internal static int FirstVisibleIndex(string text, int from, int basePos, List<int[]> zones)
+        {
+            for (int i = from; i < text.Length; i++)
+            {
+                if (IsSkippable(text, i)) continue;
+                if (InMathZone(zones, basePos + i)) continue;
+                return i;
+            }
+            return -1;
+        }
+
+        /// <summary>公式区感知版：返回末个锚点字符下标。</summary>
+        internal static int LastVisibleIndex(string text, int basePos, List<int[]> zones)
+        {
+            for (int i = text.Length - 1; i >= 0; i--)
+            {
+                if (IsSkippable(text, i)) continue;
+                if (InMathZone(zones, basePos + i)) continue;
+                return i;
+            }
+            return -1;
+        }
+
         /// <summary>
         /// 提取段落签名。快路径：段落区间整体读（均匀段落 = 首个非空 run 的有效值，典型文档占绝大多数）；
         /// 出现混合哨兵（wdUndefined）时降级为“首个非空字符”逐点探测。空段返回 IsEmpty 签名。
         /// </summary>
-        public static FormatSignature Read(Paragraph paragraph)
+        public static FormatSignature Read(Paragraph paragraph, List<int[]> mathZones = null)
         {
             if (paragraph == null) return EmptySig();
 
@@ -346,11 +418,13 @@ namespace TypeRight.Signature
                 TicksText += Delta(t1);
 
                 offset = -1;
-                int limit = System.Math.Min(text.Length, 24);
+                // \u6709\u516c\u5f0f\u533a\u65f6\u626b\u5168\u6587\uff08\u516c\u5f0f\u53ef\u80fd\u5360\u6bb5\u9996\u5f88\u957f\uff0c24 \u5b57\u7b26\u7a97\u53e3\u4f1a\u6f0f\u6389\u540e\u9762\u7684\u6b63\u6587\u951a\u70b9\uff09
+                int limit = mathZones != null ? text.Length : System.Math.Min(text.Length, 24);
                 for (int i = 0; i < limit; i++)
                 {
                     char ch = text[i];
                     if (ch == '\r' || ch == '\a' || ch == '\v' || ch == ' ' || ch == '\u3000' || ch == '\t') continue;
+                    if (InMathZone(mathZones, start + i)) continue;   // \u516c\u5f0f\u533a\u5b57\u7b26\u4e0d\u5145\u5f53\u951a\u70b9
                     offset = i;
                     break;
                 }
@@ -396,11 +470,11 @@ namespace TypeRight.Signature
                 sig.LatinFont = NormalizeFont(f.NameAscii);
                 sig.SizePt = ReadSizeStable(f);
                 sig.BoldRaw = ReadBoldStable(f);
-                sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic);
+                sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic, mathZones);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
-                Range lastChar = FindLastVisibleCharRange(probe);
+                Range lastChar = FindLastVisibleCharRange(probe, mathZones);
                 ReadLastAnchor(lastChar, ref sig);        // 尾锚点；单可见字符段回填为首锚点（均匀）
-                ReadExtraAnchors(probe, lastChar, start, text, offset, ref sig);   // 中段 25/50/75% 采样
+                ReadExtraAnchors(probe, lastChar, start, text, offset, ref sig, mathZones);   // 中段 25/50/75% 采样
                 TicksFont += Delta(t3);
             }
             catch { }
@@ -432,8 +506,9 @@ namespace TypeRight.Signature
             };
         }
 
-        /// <summary>末个可见字符锚点（与首字符不同位置才算；单可见字符段返回 null → 视为均匀段）。</summary>
-        private static Range FindLastVisibleCharRange(Range firstCharProbe)
+        /// <summary>末个可见字符锚点（与首字符不同位置才算；单可见字符段返回 null → 视为均匀段）。
+        /// 公式区感知：公式区字符不当尾锚，位置落在区内时跳到区首之前继续找。</summary>
+        private static Range FindLastVisibleCharRange(Range firstCharProbe, List<int[]> mathZones)
         {
             try
             {
@@ -441,8 +516,19 @@ namespace TypeRight.Signature
                 int endPos = para.End - 1;
                 int start = para.Start;
                 int guard = 0;
-                while (endPos > start && guard++ < 6)
+                while (endPos > start && guard++ < 64)
                 {
+                    if (InMathZone(mathZones, endPos - 1))
+                    {
+                        // 跳过整个公式区：退到区首（区首位置上的字符是区内第一个字符）
+                        for (int i = 0; i < (mathZones == null ? 0 : mathZones.Count); i++)
+                        {
+                            int[] z = mathZones[i];
+                            if (endPos - 1 >= z[0] && endPos - 1 < z[1]) { endPos = z[0]; break; }
+                            if (z[0] > endPos - 1) break;
+                        }
+                        continue;
+                    }
                     Range last = para.Document.Range(endPos - 1, endPos);
                     string t = last.Text ?? "";
                     if (t.Length > 0)
@@ -542,7 +628,7 @@ namespace TypeRight.Signature
         /// 双锚点对"首尾相同、中间不同"的两个家族无区分力（用户实测命中），中段采样补盲。
         /// 单可见字符段/极短段：采样点全部回退为首锚点（均匀语义）。</summary>
         private static void ReadExtraAnchors(Range firstCharProbe, Range lastChar, int paraStart,
-            string text, int firstIdx, ref FormatSignature sig)
+            string text, int firstIdx, ref FormatSignature sig, List<int[]> mathZones)
         {
             var extras = new FormatSignature.AnchorExtra[3];
             try
@@ -553,10 +639,17 @@ namespace TypeRight.Signature
                 {
                     double frac = 0.25 * (k + 1);
                     int idx = firstIdx + (int)Math.Round((lastIdx - firstIdx) * frac);
-                    // 落在空白字符上则向后找可见字符（≤4 步，不越过尾字符）
+                    // 落在空白/公式区字符上则向后找锚点字符（不越过尾字符）
                     int guard = 0;
-                    while (idx < lastIdx && guard++ < 4)
+                    while (idx < lastIdx && guard++ < 8)
                     {
+                        if (InMathZone(mathZones, paraStart + idx))
+                        {
+                            int nz = SkipMathForward(mathZones, paraStart + idx) - paraStart;
+                            if (nz <= idx) break;
+                            idx = nz;
+                            continue;
+                        }
                         char ch = idx >= 0 && idx < text.Length ? text[idx] : '\0';
                         if (ch != '\r' && ch != '\a' && ch != '\v' && ch != ' ' && ch != '　' && ch != '\t' && ch != '\0') break;
                         idx++;
@@ -599,7 +692,7 @@ namespace TypeRight.Signature
         /// 混合斜体段（如仅标点斜体）判非斜体——黄金取证：斜体图注与非斜体副标题需可合并为 7 段，
         /// 而整体斜体的正文段不得混入正文组（21/64 计数）。
         /// </summary>
-        private static int ItalicOfParagraph(Range firstCharProbe, int firstItalic)
+        private static int ItalicOfParagraph(Range firstCharProbe, int firstItalic, List<int[]> mathZones)
         {
             // 二态（黄金取证）：首字符与末个可见字符均为 -1 才算整体斜体段；其余（含杂值/混合）一律 0。
             // 斜体标点（【 图注）与纯段落（副标题）由此可合并为 7 段；整体斜体差异仍可区分。
@@ -610,8 +703,18 @@ namespace TypeRight.Signature
                 int endPos = para.End - 1;
                 int start = para.Start;
                 int guard = 0;
-                while (endPos > start && guard++ < 6)
+                while (endPos > start && guard++ < 64)
                 {
+                    if (InMathZone(mathZones, endPos - 1))
+                    {
+                        for (int i = 0; i < (mathZones == null ? 0 : mathZones.Count); i++)
+                        {
+                            int[] z = mathZones[i];
+                            if (endPos - 1 >= z[0] && endPos - 1 < z[1]) { endPos = z[0]; break; }
+                            if (z[0] > endPos - 1) break;
+                        }
+                        continue;
+                    }
                     Range last = para.Document.Range(endPos - 1, endPos);
                     string t = last.Text ?? "";
                     if (t.Length > 0)

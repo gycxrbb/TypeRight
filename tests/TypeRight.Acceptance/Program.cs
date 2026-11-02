@@ -30,6 +30,12 @@ namespace TypeRight.Acceptance
                 try { app.Quit(); app.Dispose(); } catch { }
                 return 0;
             }
+            if (filter == "p9")
+            {
+                DiagP9.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return 0;
+            }
             if (filter == "p7")
             {
                 DiagP7.Run(env);
@@ -143,6 +149,7 @@ namespace TypeRight.Acceptance
                 new KeyValuePair<string, Action<TestEnv>>("TC-18", e => { e.RecycleWord(); CasesC.TC18(e); }),
                 new KeyValuePair<string, Action<TestEnv>>("TC-19", e => { e.RecycleWord(); CasesD.TC19(e); }),
                 new KeyValuePair<string, Action<TestEnv>>("TC-20", e => { e.RecycleWord(); CasesD.TC20(e); }),
+                new KeyValuePair<string, Action<TestEnv>>("TC-21", e => { e.RecycleWord(); CasesE.TC21(e); }),
                                                             };
 
             int executed = 0;
