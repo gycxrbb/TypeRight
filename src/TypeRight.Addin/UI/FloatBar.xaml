@@ -236,6 +236,9 @@
                                VerticalAlignment="Center" Margin="0,0,7,0"/>
                     <TextBlock x:Name="TxtCount" Text="已匹配 N 段" FontSize="13" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                    <Button x:Name="BtnJump" Style="{StaticResource TyPlain}" Content="下一处 ⤵" FontSize="11"
+                            Margin="10,0,0,0" Padding="6,1,6,1" Click="OnJumpNext" ToolTip="把下一处命中设为真选区（循环）：选中后可直接用 Word「开始」选项卡或 Ctrl+D 调格式"
+                            VerticalAlignment="Center"/>
                 </StackPanel>
                 <Button x:Name="BtnClose" Style="{StaticResource TyPlain}" Content="✕" FontSize="10.5"
                         Width="22" Height="22" Click="OnClose" ToolTip="关闭 (Esc)"

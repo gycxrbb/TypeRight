@@ -646,6 +646,11 @@ namespace TypeRight.Addin.UI
         [DllImport("user32.dll")]
         private static extern IntPtr GetActiveWindow();
 
+        private void OnJumpNext(object sender, RoutedEventArgs e)
+        {
+            _controller.JumpToNextMatch();
+        }
+
         private void OnClose(object sender, RoutedEventArgs e)
         {
             _controller.CloseSession();

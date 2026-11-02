@@ -12,6 +12,101 @@ namespace TypeRight.Formulas
     /// </summary>
     public static class MathmlInjector
     {
+        /// <summary>分段计时累计（性能归因用，FormulaConverter 读取并清零；毫秒）。</summary>
+        public static long MsScratch, MsCopy;
+
+        private static long Now() { return System.Diagnostics.Stopwatch.GetTimestamp(); }
+        private static long Delta(long start) { return (Now() - start) * 1000 / System.Diagnostics.Stopwatch.Frequency; }
+
+        /// <summary>批量注入：一个临时 docx 承载 gap 内全部公式（每公式一段），草稿只 InsertFile 一次，
+        /// 再按文档降序逐个 FormattedText 赋值（降序保证未处理目标位置不漂移）。
+        /// 返回逐项成败；任何整批性失败返回全 false（调用方逐个回退单发路径）。</summary>
+        public static bool[] TryInjectBatch(Document doc, Range[] targets, string[] mathmls, string xslPath, Document scratch)
+        {
+            int n = targets.Length;
+            var ok = new bool[n];
+            if (doc == null || scratch == null || n == 0 || n != mathmls.Length) return ok;
+            if (string.IsNullOrEmpty(xslPath) || !File.Exists(xslPath)) return ok;
+
+            string tempFile = null;
+            try
+            {
+                // 1) 全部 MathML → OMML
+                var ommls = new string[n];
+                for (int i = 0; i < n; i++)
+                {
+                    string omml = XslMathmlToOmml(mathmls[i], xslPath);
+                    int s = omml.IndexOf("<m:oMath", StringComparison.Ordinal);
+                    if (s < 0) return ok;
+                    ommls[i] = omml.Substring(s).Trim();
+                }
+
+                // 2) 单个 docx：每公式一段
+                tempFile = Path.Combine(Path.GetTempPath(), "typeright-math-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".docx");
+                File.WriteAllBytes(tempFile, BuildMinimalDocx(ommls));
+
+                // 3) 装进草稿（一次 InsertFile），规范到恰好 N 段
+                long t0 = Now();
+                if (!LoadParagraphsIntoScratch(scratch, tempFile, n))
+                {
+                    MsScratch += Delta(t0);
+                    return ok;
+                }
+                MsScratch += Delta(t0);
+
+                // 4) 降序逐个复制（目标位置稳定）
+                for (int i = n - 1; i >= 0; i--)
+                {
+                    try
+                    {
+                        long t1 = Now();
+                        Range srcPara = scratch.Paragraphs[i + 1].Range;
+                        Range src = scratch.Range(srcPara.Start, srcPara.End - 1);
+                        targets[i].FormattedText = src.FormattedText;
+                        MsCopy += Delta(t1);
+
+                        // 成功判据（同单发路径）
+                        if (targets[i].OMaths.Count == 0)
+                        {
+                            var probe = targets[i].Duplicate;
+                            probe.Collapse(NetOffice.WordApi.Enums.WdCollapseDirection.wdCollapseEnd);
+                            probe.MoveEnd(NetOffice.WordApi.Enums.WdUnits.wdCharacter, 1);
+                            if (probe.OMaths.Count == 0) continue;   // 失败：留给单发回退
+                        }
+                        ok[i] = true;
+                    }
+                    catch { }
+                }
+                return ok;
+            }
+            catch
+            {
+                return ok;
+            }
+            finally
+            {
+                try { if (tempFile != null && File.Exists(tempFile)) File.Delete(tempFile); } catch { }
+            }
+        }
+
+        /// <summary>清空草稿 → InsertFile → 规范到恰好 expectedParas 段（多余尾段删除）。</summary>
+        private static bool LoadParagraphsIntoScratch(Document scratch, string tempFile, int expectedParas)
+        {
+            try
+            {
+                scratch.Content.Delete();
+                scratch.Range(0, 0).InsertFile(tempFile);
+                int guard = 0;
+                while (scratch.Paragraphs.Count > expectedParas && guard++ < 10)
+                {
+                    Range tail = scratch.Range(scratch.Content.End - 1, scratch.Content.End);
+                    if ((tail.Text ?? "") != "\r") break;
+                    tail.Delete();
+                }
+                return scratch.Paragraphs.Count == expectedParas;
+            }
+            catch { return false; }
+        }
         /// <summary>注入成功返回 true；任何失败返回 false（调用方回落 Functions 路径）。
         /// segStart/segLen/paraLen 用于判断片段在段中位置，InsertFile 插入完整段落后按需合并拆分。
         /// scratch：复用的隐藏草稿文档（批量转换时开一次、全程复用）；
@@ -40,16 +135,22 @@ namespace TypeRight.Formulas
                 bool ownScratch = scratch == null;
                 try
                 {
+                    long t0 = Now();
                     if (ownScratch)
                     {
                         scratch = doc.Application.Documents.Open(tempFile);
                     }
                     else if (!LoadIntoScratch(scratch, tempFile))
                     {
+                        MsScratch += Delta(t0);
                         return false;
                     }
                     Range src = scratch.Range(0, scratch.Content.End - 1);
+                    MsScratch += Delta(t0);
+
+                    long t1 = Now();
                     target.FormattedText = src.FormattedText;
+                    MsCopy += Delta(t1);
                 }
                 finally
                 {
@@ -84,20 +185,7 @@ namespace TypeRight.Formulas
         /// 保证草稿只剩"公式¶"一段（Range(0, End-1) 即纯公式内容，与自开路径等价）。</summary>
         private static bool LoadIntoScratch(Document scratch, string tempFile)
         {
-            try
-            {
-                scratch.Content.Delete();
-                scratch.Range(0, 0).InsertFile(tempFile);
-                int guard = 0;
-                while (scratch.Paragraphs.Count > 1 && guard++ < 5)
-                {
-                    Range tail = scratch.Range(scratch.Content.End - 1, scratch.Content.End);
-                    if ((tail.Text ?? "") != "\r") break;
-                    tail.Delete();
-                }
-                return scratch.Paragraphs.Count == 1;
-            }
-            catch { return false; }
+            return LoadParagraphsIntoScratch(scratch, tempFile, 1);
         }
 
         /// <summary>
@@ -166,17 +254,22 @@ namespace TypeRight.Formulas
             }
         }
 
-        /// <summary>把 m:oMath 元素包进最小合法 docx（zip：ContentTypes + rels + document.xml）。</summary>
-        private static byte[] BuildMinimalDocx(string mathElement)
+        /// <summary>把 m:oMath 元素串包进最小合法 docx（zip：ContentTypes + rels + document.xml）。
+        /// 单元素 = 单段；多元素 = 每元素一段（批量注入用）。</summary>
+        private static byte[] BuildMinimalDocx(params string[] mathElements)
         {
             const string w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
             const string m = "http://schemas.openxmlformats.org/officeDocument/2006/math";
             const string r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
+            var body = new StringBuilder();
+            foreach (string el in mathElements)
+                body.Append("<w:p>").Append(el).Append("</w:p>");
+
             string documentXml =
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
                 "<w:document xmlns:w=\"" + w + "\" xmlns:m=\"" + m + "\" xmlns:r=\"" + r + "\">" +
-                "<w:body><w:p>" + mathElement + "</w:p></w:body></w:document>";
+                "<w:body>" + body + "</w:body></w:document>";
 
             const string contentTypes =
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +

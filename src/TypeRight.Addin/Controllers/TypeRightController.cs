@@ -213,9 +213,37 @@ namespace TypeRight.Addin.Controllers
             RecomputeMatches();
         }
 
-        /// <summary>浮动条：应用格式（每个取值 = 一个撤销单元）。</summary>
-        public void ApplyChanges(FormatChanges changes)
+        /// <summary>把下一处命中设为 Word 真选区（循环跳转）——最接近"真选中"的桥：
+        /// Word 只支持单一连续选区，无法多重选中，跳过去之后即可用原生"开始"选项卡/Ctrl+D 调该处。
+        /// 返回跳到的显示序号（1 起），无会话返回 0。</summary>
+        public int JumpToNextMatch()
         {
+            if (_session == null || _session.MatchedUnits.Count == 0) return 0;
+            try
+            {
+                int cur;
+                try { cur = App.Selection.Range.Start; } catch { cur = int.MinValue; }
+                int next = -1;
+                for (int i = 0; i < _session.MatchedUnits.Count; i++)
+                {
+                    int s = _session.MatchedUnits[i].Start;
+                    if (s > cur) { next = i; break; }
+                }
+                if (next < 0) next = 0;   // 循环
+                MatchUnit u = _session.MatchedUnits[next];
+                int end = u.End > u.Start + 1 ? u.End - 1 : u.End;   // 排除段落标记
+                App.Selection.SetRange(u.Start, end);
+                return next + 1;
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("JumpToNextMatch: " + ex);
+                return 0;
+            }
+        }
+
+        /// <summary>浮动条：应用格式（每个取值 = 一个撤销单元）。</summary>
+        public void ApplyChanges(FormatChanges changes)        {
             if (_session == null || changes == null || !changes.HasAny) return;
 
             // P0-3 中西文联动：设置中文字体时西文/数字自动 TNR（可在设置关闭）
@@ -348,6 +376,7 @@ namespace TypeRight.Addin.Controllers
                     _failuresWindow.ShowResults(stats);
                 }
                 TypeRightAddin.Log("ConvertFormulas: " + stats.SummaryText());
+                if (stats.TimingText != null) TypeRightAddin.Log("ConvertFormulas: " + stats.TimingText);
             }
             catch (Exception ex)
             {
