@@ -307,7 +307,9 @@ namespace TypeRight.Signature
                 return applied;
             }
 
-            /// <summary>把命中单元区间标记为黄色（引导句感知：只标引导句或只标正文）。</summary>
+            /// <summary>把命中单元区间标记为黄色（引导句感知：只标引导句或只标正文）。
+            /// 区间必须排除末尾的段落/单元格标记：跨结束标记设置高亮会被 Word 扩散到整段
+            /// （实测：正文单元 [边界, End) 整段变黄，引导区被误染；End-1 后恢复精确）。</summary>
             public int ApplyUnits(UnitMatchResult match)
             {
                 Clear();
@@ -317,7 +319,8 @@ namespace TypeRight.Signature
                 {
                     try
                     {
-                        Range r = _doc.Range(u.Start, u.End);
+                        int end = u.End > u.Start + 1 ? u.End - 1 : u.End;   // 排除段落/单元格标记
+                        Range r = _doc.Range(u.Start, end);
                         WdColorIndex original = r.HighlightColorIndex;
                         if (original == WdColorIndex.wdNoHighlight)
                         {
