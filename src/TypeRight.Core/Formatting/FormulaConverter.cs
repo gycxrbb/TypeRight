@@ -84,161 +84,234 @@ namespace TypeRight.Formatting
         }
 
         /// <summary>转换整个文档（正文段落 + 表格单元格；已是公式对象的区间自动跳过，保证幂等）。
-        /// 性能/观感：全程复用一个隐藏草稿文档注入公式（旧行为每个公式 Documents.Open 一次临时文档，
-        /// 254 处公式 = 254 次窗口开合：顶部频闪 + ~150ms/个的开销）；
-        /// gap 内多片段走批量注入（一个 docx 一次 InsertFile 承载全部，降序逐个复制），
-        /// 不再"转一个重扫一遍"（降序转换不影响更早片段的位置）。</summary>
+        /// 三阶段流水（性能主路径，DCOM 实测 254 处：队列式 33~60s → gap 批量 14.7s → 本版）：
+        /// ① 规划（纯读）：文档级公式区一次枚举 + 每段文本一次读取，gap 用位置在 C# 内切分，
+        ///    全部片段的目标区间与 MML 一次算齐——不再逐段 OMaths.Count/逐 gap 建 Range（~千次 COM 往返）；
+        /// ② 注入：全部公式合并进一个临时 docx，隐藏草稿 InsertFile 一次，降序逐个 FormattedText 赋值
+        ///    （降序=每次插入只影响已处理完的更后位置，未处理目标位置稳定）；
+        /// ③ 终检+回退：文档级公式区计数 O(1) 判定整批成败，不符才逐项定位、逐项回退单发路径。
+        /// 公式构建会重写单元格 run 的 rPr：表格内本轮确有转换的段落最后统一强制显式回写（TC-20）。</summary>
         public FormulaStats ConvertDocument()
         {
             var stats = new FormulaStats();
             var watch = System.Diagnostics.Stopwatch.StartNew();
             ResetTimers();
-
-            // 表格区间（位置判定，替代逐段 wdWithInTable——该调用进程内偶发假值且逐段开销大）
-            List<int[]> tableRanges = TypeRight.Signature.SimilarSelector.TableRangesOf(_doc);
             bool hasMml = !string.IsNullOrEmpty(_mml2OmmlPath);
 
-            // 隐藏草稿文档（Visible=false，不生成窗口）：批量注入的公式载体
+            // ── 阶段 1：全文规划（纯读，无编辑） ──
+            int zonesBefore = 0;
+            try { zonesBefore = _doc.OMaths.Count; } catch { }
+
+            var plan = new List<PlannedSeg>();
+            long t1 = Ts();
+            List<int[]> zones = TypeRight.Signature.SimilarSelector.MathZoneRanges(_doc);   // null=无公式区
+            try
+            {
+                foreach (Paragraph p in _doc.Paragraphs)
+                {
+                    try
+                    {
+                        Range pr = p.Range;
+                        int pStart = pr.Start, pEnd = pr.End;
+                        string pText;
+                        try { pText = pr.Text ?? ""; }
+                        catch { continue; }
+
+                        // gap = 段内数学区之外的子区间，纯位置切分
+                        int cursor = pStart;
+                        if (zones != null)
+                        {
+                            foreach (int[] z in zones)
+                            {
+                                if (z[1] <= cursor) continue;
+                                if (z[0] >= pEnd) break;
+                                if (z[0] > cursor) PlanGap(p, pText, pStart, cursor - pStart, z[0] - pStart, plan);
+                                if (z[1] > cursor) cursor = z[1];
+                                if (cursor >= pEnd) break;
+                            }
+                        }
+                        if (pEnd > cursor) PlanGap(p, pText, pStart, cursor - pStart, pEnd - pStart, plan);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            MsPlan += Td(t1);
+
+            var ok = new bool[plan.Count];
+
+            // ── 阶段 2：一次装载 + 降序批量注入 ──
             Document scratch = null;
             try
             {
-                try
+                if (plan.Count > 0)
                 {
-                    scratch = _doc.Application.Documents.Add(
-                        System.Reflection.Missing.Value, System.Reflection.Missing.Value,
-                        System.Reflection.Missing.Value, false);
+                    try
+                    {
+                        scratch = _doc.Application.Documents.Add(
+                            System.Reflection.Missing.Value, System.Reflection.Missing.Value,
+                            System.Reflection.Missing.Value, false);
+                    }
+                    catch { scratch = null; }
                 }
-                catch { scratch = null; }
 
-                foreach (Paragraph p in _doc.Paragraphs)
+                if (hasMml && scratch != null)
                 {
-                    bool convertedHere = false;
-                    try
+                    var injectIdx = new List<int>();
+                    for (int i = 0; i < plan.Count; i++)
+                        if (plan[i].Mml != null) injectIdx.Add(i);
+                    if (injectIdx.Count > 0)
                     {
-                        // 单遍降序：每 gap 的片段集合一次算齐，从后往前转换——
-                        // 每次插入只影响其后位置（已处理完），更早片段位置稳定，无需"转一个重扫一遍"。
-                        // （旧队列式循环：254 处公式 ≈ 100+ 次全段重扫，是"一个个慢慢来"观感的一半来源）
-                        foreach (Range gap in TextGapsExcludingMath(p))
+                        var targets = new Range[injectIdx.Count];
+                        var mmls = new string[injectIdx.Count];
+                        for (int j = 0; j < injectIdx.Count; j++)
                         {
-                                long tg = Ts();
-                                string gapText;
-                                int gapStart;
-                                try { gapText = gap.Text ?? ""; gapStart = gap.Start; }
-                                catch { continue; }
-                                string trimmed = gapText.TrimEnd('\r', '\a', '\v');
-                                if (trimmed.Trim().Length == 0) continue;
-
-                                var segs = MathSegmenter.FindSegments(trimmed);
-                                MsSeg += Td(tg);
-                                if (segs.Count == 0) continue;
-
-                                var done = new bool[segs.Count];
-
-                                // ── 批量注入：gap 内 ≥2 个可准备片段 → 一个 docx 一次装草稿 ──
-                                if (hasMml && scratch != null && segs.Count >= 2)
-                                {
-                                    long tp = Ts();
-                                    var mmls = new List<string>();
-                                    var order = new List<int>();
-                                    for (int si = 0; si < segs.Count; si++)
-                                    {
-                                        string mml = PrepareMml(segs[si].Text);
-                                        if (mml != null) { mmls.Add(mml); order.Add(si); }
-                                    }
-                                    MsPrepare += Td(tp);   // 只计 MML 预备；注入由 MathmlInjector 自记（草稿/复制）
-                                    if (mmls.Count >= 2)
-                                    {
-                                        var targets = new Range[mmls.Count];
-                                        for (int j = 0; j < mmls.Count; j++)
-                                        {
-                                            var seg = segs[order[j]];
-                                            targets[j] = _doc.Range(gapStart + seg.Start, gapStart + seg.Start + seg.Length);
-                                        }
-                                        bool[] ok = MathmlInjector.TryInjectBatch(_doc, targets, mmls.ToArray(), _mml2OmmlPath, scratch);
-                                        for (int j = 0; j < ok.Length; j++)
-                                        {
-                                            if (!ok[j]) continue;
-                                            done[order[j]] = true;
-                                            stats.Converted++;
-                                            convertedHere = true;
-                                        }
-                                    }
-                                }
-
-                                // ── 降序单发：批量未覆盖/失败/无批量的片段 ──
-                                for (int si = segs.Count - 1; si >= 0; si--)
-                                {
-                                    if (done[si]) continue;
-                                    var seg = segs[si];
-                                    try
-                                    {
-                                        long tp = Ts();
-                                        long scratchBefore = MathmlInjector.MsScratch, copyBefore = MathmlInjector.MsCopy;
-                                        Range rng = _doc.Range(gapStart + seg.Start, gapStart + seg.Start + seg.Length);
-                                        bool okSingle = TryConvertRange(rng, seg.Text, false, seg.Start, seg.Length, trimmed.Length, scratch);
-                                        MsPrepare += Td(tp) - (MathmlInjector.MsScratch - scratchBefore) - (MathmlInjector.MsCopy - copyBefore);
-                                        if (okSingle)
-                                        {
-                                            stats.Converted++;
-                                            convertedHere = true;
-                                        }
-                                        else
-                                        {
-                                            stats.Failed++;
-                                            if (stats.FailedLocations.Count < 50)
-                                                stats.FailedLocations.Add("¶" + ParagraphIndex(p) + "  " + (seg.Text.Length > 30 ? seg.Text.Substring(0, 30) + "…" : seg.Text));
-                                        }
-                                    }
-                                    catch { }
-                                }
-                            }
+                            targets[j] = plan[injectIdx[j]].Target;
+                            mmls[j] = plan[injectIdx[j]].Mml;
                         }
-                    catch { }
-                    // TC-20（P0）：公式构建会重写单元格 run 的 rPr——只对"表格内且确有公式"的段
-                    // 强制显式回写（旧行为对全部表格段都做，纯表格段是无效开销）
+                        bool[] okBatch = MathmlInjector.InjectAll(_doc, targets, mmls, _mml2OmmlPath, scratch);
+                        for (int j = 0; j < injectIdx.Count; j++)
+                            ok[injectIdx[j]] = okBatch[j];
+                    }
+                }
+
+                // ── 阶段 3：终检（O(1)）→ 不符才逐项定位 ──
+                long tv = Ts();
+                int claimed = 0;
+                foreach (bool b in ok) if (b) claimed++;
+                if (claimed > 0)
+                {
+                    int zonesAfter = 0;
+                    try { zonesAfter = _doc.OMaths.Count; } catch { }
+                    if (zonesAfter - zonesBefore != claimed)
+                    {
+                        // 有静默失败（或意外多区）：逐项定位
+                        for (int i = plan.Count - 1; i >= 0; i--)
+                        {
+                            if (!ok[i]) continue;
+                            try { if (plan[i].Target.OMaths.Count == 0) ok[i] = false; }
+                            catch { ok[i] = false; }
+                        }
+                    }
+                }
+                MsVerify += Td(tv);
+
+                // ── 阶段 3b：逐项回退（未注入/注入失败；降序保位置稳定） ──
+                for (int i = plan.Count - 1; i >= 0; i--)
+                {
+                    if (ok[i]) continue;
+                    var s = plan[i];
+                    long tf = Ts();
+                    long scratchBefore = MathmlInjector.MsScratch, copyBefore = MathmlInjector.MsCopy;
                     try
                     {
-                        if (convertedHere || HasMathZone(p))
+                        if (TryConvertRange(s.Target, s.SegText, false, s.SegStart, s.SegLen, s.ParaLen, scratch))
+                            ok[i] = true;
+                        else
                         {
-                            int ps = p.Range.Start;
-                            if (InRanges(tableRanges, ps))
-                            {
-                                long tf = Ts();
-                                ForceExplicitRunProps(p);
-                                MsForce += Td(tf);
-                            }
+                            stats.Failed++;
+                            if (stats.FailedLocations.Count < 50)
+                                stats.FailedLocations.Add("¶" + s.ParaStart + "  " + (s.SegText.Length > 30 ? s.SegText.Substring(0, 30) + "…" : s.SegText));
                         }
                     }
                     catch { }
+                    MsFallback += Td(tf) - (MathmlInjector.MsScratch - scratchBefore) - (MathmlInjector.MsCopy - copyBefore);
+                }
+
+                // ── 表格 rPr 强制回写（TC-20）：公式构建会重写单元格 run 的 rPr。
+                // 剥离来自 Functions/BuildUp 构建路径；MML 管线的 FormattedText 粘贴经 TC-20 裁决不剥离。
+                // 因此只对"预备失败（Mml==null）必走单发路径"的表格段落回写——批量注入段落全免。
+                List<int[]> tableRanges = TypeRight.Signature.SimilarSelector.TableRangesOf(_doc);
+                var forced = new HashSet<int>();
+                for (int i = 0; i < plan.Count; i++)
+                {
+                    if (!ok[i] || plan[i].Mml != null) continue;
+                    if (!forced.Add(plan[i].ParaStart)) continue;
+                    if (InRanges(tableRanges, plan[i].ParaStart))
+                    {
+                        long tfr = Ts();
+                        ForceExplicitRunProps(plan[i].Para);
+                        MsForce += Td(tfr);
+                    }
                 }
             }
             finally
             {
                 if (scratch != null) { try { scratch.Close(false); } catch { } }
             }
+
+            int converted = 0;
+            foreach (bool b in ok) if (b) converted++;
+            stats.Converted = converted;
             watch.Stop();
             stats.ElapsedMs = watch.ElapsedMilliseconds;
             stats.TimingText = TimingText(watch.ElapsedMilliseconds);
             return stats;
         }
 
+        /// <summary>规划产物：一个待转换公式片段。</summary>
+        private sealed class PlannedSeg
+        {
+            public Range Target;      // 目标区间（活对象，随编辑自动跟随）
+            public string Mml;        // 预备好的 MathML；null = 准备失败（平衡校验等），走单发回退
+            public string SegText;
+            public int SegStart, SegLen, ParaLen;
+            public Paragraph Para;
+            public int ParaStart;
+        }
+
+        /// <summary>把一个纯文本 gap 内的全部公式片段计入规划。
+        /// offS/offE 为段内字符偏移；片段位置相对 trimmed（≈ gap 起算）。</summary>
+        private void PlanGap(Paragraph p, string pText, int pStart, int offS, int offE, List<PlannedSeg> plan)
+        {
+            if (offE <= offS || offS < 0 || offE > pText.Length) return;
+            string gapText = pText.Substring(offS, offE - offS);
+            string trimmed = gapText.TrimEnd('\r', '\a', '\v');
+            if (trimmed.Trim().Length == 0) return;
+
+            long ts = Ts();
+            var segs = MathSegmenter.FindSegments(trimmed);
+            MsSeg += Td(ts);
+            if (segs.Count == 0) return;
+
+            long tp = Ts();
+            int absStart = pStart + offS;
+            foreach (MathSegmenter.Segment seg in segs)
+            {
+                var ps = new PlannedSeg
+                {
+                    Para = p,
+                    ParaStart = pStart,
+                    SegText = seg.Text,
+                    SegStart = seg.Start,
+                    SegLen = seg.Length,
+                    ParaLen = trimmed.Length,
+                    Mml = PrepareMml(seg.Text),
+                };
+                try { ps.Target = _doc.Range(absStart + seg.Start, absStart + seg.Start + seg.Length); }
+                catch { continue; }
+                plan.Add(ps);
+            }
+            MsPrepare += Td(tp);
+        }
+
         // ---- 分段计时（性能归因）----
-        public static long MsSeg, MsPrepare, MsForce;
+        public static long MsPlan, MsSeg, MsPrepare, MsVerify, MsFallback, MsForce;
         private static long Ts() { return System.Diagnostics.Stopwatch.GetTimestamp(); }
         private static long Td(long start) { return (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000 / System.Diagnostics.Stopwatch.Frequency; }
 
         private static void ResetTimers()
         {
-            MsSeg = MsPrepare = MsForce = 0;
+            MsPlan = MsSeg = MsPrepare = MsVerify = MsFallback = MsForce = 0;
             MathmlInjector.MsScratch = MathmlInjector.MsCopy = 0;
         }
 
         private static string TimingText(long totalMs)
         {
             long scratch = MathmlInjector.MsScratch, copy = MathmlInjector.MsCopy;
-            long other = totalMs - MsSeg - MsPrepare - MsForce - scratch - copy;
-            return string.Format("耗时分解: 片段扫描{0}ms 预备(MML/XSL){1}ms 草稿装载{2}ms 公式复制{3}ms 表格rPr{4}ms 其他{5}ms / 总{6}ms",
-                MsSeg, MsPrepare, scratch, copy, MsForce, other, totalMs);
+            long other = totalMs - MsPlan - MsPrepare - MsVerify - MsFallback - MsForce - scratch - copy;
+            return string.Format("耗时分解: 规划{0}ms(片段扫描{1}) 预备(MML/XSL){2}ms 草稿装载{3}ms 公式复制{4}ms 终检{5}ms 回退{6}ms 表格rPr{7}ms 其他{8}ms / 总{9}ms",
+                MsPlan, MsSeg, MsPrepare, scratch, copy, MsVerify, MsFallback, MsForce, other, totalMs);
         }
 
         private static bool HasMathZone(Paragraph p)
@@ -516,18 +589,20 @@ namespace TypeRight.Formatting
                     try
                     {
                         Font f = g.Font;
-                        // 读后原值回写：强制 Word 序列化出显式 w:rFonts/w:sz/w:b/w:i/w:color
+                        // 读后原值回写：强制 Word 序列化出显式 w:rFonts/w:sz/w:b/w:i/w:color。
+                        // 只回写"非默认值"——默认态（不加粗/不斜体/自动色）本就不在 rPr 里，
+                        // 无从被公式构建剥离，写回是纯 COM 开销（实测省 ~30% 表格回写耗时）。
                         string fe = f.NameFarEast; if (!string.IsNullOrEmpty(fe)) f.NameFarEast = fe;
                         string la = f.NameAscii; if (!string.IsNullOrEmpty(la)) f.NameAscii = la;
                         string lo = f.NameOther; if (!string.IsNullOrEmpty(lo)) f.NameOther = lo;
                         float sz = f.Size;
                         if (sz > 0 && sz < WordFormatUtils.UndefinedFloat) f.Size = sz;
                         int bold = f.Bold;
-                        if (bold == -1 || bold == 0) f.Bold = bold;
+                        if (bold == -1) f.Bold = bold;   // 仅显式加粗需要防剥离
                         int ital = f.Italic;
-                        if (ital == -1 || ital == 0) f.Italic = ital;
+                        if (ital == -1) f.Italic = ital;
                         int col = (int)f.Color;
-                        if (col >= 0 && col <= 0xFFFFFF) f.Color = (WdColor)col;
+                        if (col >= 0 && col <= 0xFFFFFF) f.Color = (WdColor)col;   // 自动色无需回写
                     }
                     catch { }
                 }

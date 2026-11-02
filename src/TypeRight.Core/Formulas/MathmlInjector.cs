@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -18,10 +19,11 @@ namespace TypeRight.Formulas
         private static long Now() { return System.Diagnostics.Stopwatch.GetTimestamp(); }
         private static long Delta(long start) { return (Now() - start) * 1000 / System.Diagnostics.Stopwatch.Frequency; }
 
-        /// <summary>批量注入：一个临时 docx 承载 gap 内全部公式（每公式一段），草稿只 InsertFile 一次，
-        /// 再按文档降序逐个 FormattedText 赋值（降序保证未处理目标位置不漂移）。
-        /// 返回逐项成败；任何整批性失败返回全 false（调用方逐个回退单发路径）。</summary>
-        public static bool[] TryInjectBatch(Document doc, Range[] targets, string[] mathmls, string xslPath, Document scratch)
+        /// <summary>文档级批量注入：全部公式合并进一个临时 docx（每公式一段），草稿 InsertFile 一次，
+        /// 降序逐个 FormattedText 赋值（降序保证未处理目标位置不漂移）。
+        /// 返回逐项赋值成败；**不做逐项公式区校验**（254 处 × 2 次 COM 读是纯开销）——
+        /// 静默失败由调用方以文档级公式区计数终检兜底（O(1)），计数不符才逐项定位。</summary>
+        public static bool[] InjectAll(Document doc, Range[] targets, string[] mathmls, string xslPath, Document scratch)
         {
             int n = targets.Length;
             var ok = new bool[n];
@@ -41,11 +43,11 @@ namespace TypeRight.Formulas
                     ommls[i] = omml.Substring(s).Trim();
                 }
 
-                // 2) 单个 docx：每公式一段
+                // 2) 单个 docx 承载全部公式
                 tempFile = Path.Combine(Path.GetTempPath(), "typeright-math-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".docx");
                 File.WriteAllBytes(tempFile, BuildMinimalDocx(ommls));
 
-                // 3) 装进草稿（一次 InsertFile），规范到恰好 N 段
+                // 3) 草稿一次装载
                 long t0 = Now();
                 if (!LoadParagraphsIntoScratch(scratch, tempFile, n))
                 {
@@ -54,26 +56,26 @@ namespace TypeRight.Formulas
                 }
                 MsScratch += Delta(t0);
 
+                // 草稿段枚举一次（Paragraphs[i] 索引器是 O(n) 重扫，逐个索引 254 段会平方级）
+                var paras = new List<NetOffice.WordApi.Paragraph>(n);
+                foreach (NetOffice.WordApi.Paragraph sp in scratch.Paragraphs)
+                {
+                    paras.Add(sp);
+                    if (paras.Count >= n) break;
+                }
+                if (paras.Count < n) return ok;
+
                 // 4) 降序逐个复制（目标位置稳定）
                 for (int i = n - 1; i >= 0; i--)
                 {
                     try
                     {
                         long t1 = Now();
-                        Range srcPara = scratch.Paragraphs[i + 1].Range;
+                        Range srcPara = paras[i].Range;
                         Range src = scratch.Range(srcPara.Start, srcPara.End - 1);
                         targets[i].FormattedText = src.FormattedText;
                         MsCopy += Delta(t1);
-
-                        // 成功判据（同单发路径）
-                        if (targets[i].OMaths.Count == 0)
-                        {
-                            var probe = targets[i].Duplicate;
-                            probe.Collapse(NetOffice.WordApi.Enums.WdCollapseDirection.wdCollapseEnd);
-                            probe.MoveEnd(NetOffice.WordApi.Enums.WdUnits.wdCharacter, 1);
-                            if (probe.OMaths.Count == 0) continue;   // 失败：留给单发回退
-                        }
-                        ok[i] = true;
+                        ok[i] = true;   // 赋值成功即记；公式区是否真建立由调用方终检兜底
                     }
                     catch { }
                 }

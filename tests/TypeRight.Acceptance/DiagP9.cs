@@ -38,6 +38,7 @@ namespace TypeRight.Acceptance
                 FormulaStats stats = converter.ConvertDocument();
                 watch.Stop();
                 Console.WriteLine("[转换] " + stats.SummaryText() + "（墙钟 " + (watch.ElapsedMilliseconds / 1000.0).ToString("0.0") + "s，DCOM 环境偏慢）");
+                if (stats.TimingText != null) Console.WriteLine("[转换] " + stats.TimingText);
 
                 List<int[]> zones1 = SimilarSelector.MathZoneRanges(doc);
                 Console.WriteLine("[后] 公式区数=" + (zones1 == null ? 0 : zones1.Count));
