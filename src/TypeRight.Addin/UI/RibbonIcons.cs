@@ -19,7 +19,7 @@ namespace TypeRight.Addin.UI
         // 大按钮：同类选择 / 公式转换 / 方案（菜单）；小图标：右键菜单 + 方案子项
         public static object GetImage(string controlId, OfficeThemeKind theme)
         {
-            bool small = controlId == "ctxSimilar" || controlId == "btnProfileSave" || controlId == "btnProfileManage";
+            bool small = controlId == "ctxSimilar" || controlId == "btnProfileSave" || controlId == "btnProfileManage" || controlId == "btnHelp";
             int size = small ? 16 : 32;
             RenderTargetBitmap bmp = Render(controlId, size, theme);
             return ToPictureDisp(bmp);
@@ -54,6 +54,9 @@ namespace TypeRight.Addin.UI
                         break;
                     case "btnProfileManage":
                         DrawManage(dc, u, fg, acc);
+                        break;
+                    case "btnHelp":
+                        DrawHelp(dc, u, fg, acc);
                         break;
                 }
             }
@@ -217,6 +220,25 @@ namespace TypeRight.Addin.UI
             }
             check.Freeze();
             dc.DrawGeometry(null, Pen(acc, 2.6), check);
+            dc.Pop();
+        }
+
+        /// <summary>使用说明：问号（accent 圆环 + fg 笔画）。</summary>
+        private static void DrawHelp(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            dc.DrawEllipse(null, Pen(acc, 2.4), new Point(16, 16), 12, 12);
+            var q1 = new StreamGeometry();
+            using (StreamGeometryContext sgc = q1.Open())
+            {
+                // 问号弧钩：从左上弧到中心下折
+                sgc.BeginFigure(new Point(12.2, 11.5), false, false);
+                sgc.BezierTo(new Point(13.4, 9.2), new Point(18.6, 9.2), new Point(18.6, 12.2), true, false);
+                sgc.BezierTo(new Point(18.6, 14.4), new Point(16, 14.9), new Point(16, 17.6), true, false);
+            }
+            q1.Freeze();
+            dc.DrawGeometry(null, Pen(fg, 2.6), q1);
+            dc.DrawEllipse(Solid(fg, 0.95), null, new Point(16, 21.8), 1.55, 1.55);
             dc.Pop();
         }
 

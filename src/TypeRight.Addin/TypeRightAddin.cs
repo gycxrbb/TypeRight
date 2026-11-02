@@ -31,6 +31,63 @@ namespace TypeRight.Addin
             catch { }
         }
 
+        /// <summary>资源管理器中定位诊断日志（帮助窗入口）。</summary>
+        public static void OpenLogFolder()
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LogFile));
+                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + LogFile + "\"");
+            }
+            catch (Exception ex) { Log("OpenLogFolder: " + ex.Message); }
+        }
+
+        /// <summary>一键诊断（发给作者排障）：版本 + 系统 + 最近日志尾部。</summary>
+        public static string CollectDiagnostics(NetOffice.WordApi.Application app)
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                sb.AppendLine("TypeRight v" + typeof(TypeRightAddin).Assembly.GetName().Version.ToString(3));
+                sb.AppendLine("OS: " + Environment.OSVersion.VersionString + "  " + (Environment.Is64BitProcess ? "x64" : "x86") + " 进程");
+                try { sb.AppendLine("Word: " + app.Version); } catch { }
+            }
+            catch { }
+            sb.AppendLine("── addin-log 尾部 ──");
+            try
+            {
+                var lines = System.IO.File.ReadAllLines(LogFile, System.Text.Encoding.UTF8);
+                for (int i = Math.Max(0, lines.Length - 80); i < lines.Length; i++)
+                    sb.AppendLine(lines[i]);
+            }
+            catch (Exception ex) { sb.AppendLine("(日志读取失败: " + ex.Message + ")"); }
+            return sb.ToString();
+        }
+
+        /// <summary>首次运行提示标记（一次即不再弹）。</summary>
+        private static string FirstRunFlagFile
+        {
+            get
+            {
+                return System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TypeRight", "first-run-shown.txt");
+            }
+        }
+
+        /// <summary>首次运行提示（发布支持）：三步用法，展示一次后落标记文件。</summary>
+        public void ShowFirstRunTipIfDue()
+        {
+            try
+            {
+                if (System.IO.File.Exists(FirstRunFlagFile)) return;
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(FirstRunFlagFile));
+                System.IO.File.WriteAllText(FirstRunFlagFile, DateTime.Now.ToString("s"), System.Text.Encoding.UTF8);
+                Controller.ShowToast("TypeRight 已就绪：光标点进段落 →「同类选择」→ 浮动条批量改格式。详细用法见选项卡里的「使用说明」。", 9000);
+                Log("FirstRunTip: shown");
+            }
+            catch (Exception ex) { Log("FirstRunTip: " + ex.Message); }
+        }
+
         /// <summary>宿主 Word 应用（基类在 OnConnection 时已包装为类型安全实例）。</summary>
         public NetOffice.WordApi.Application WordApplication { get { return Application; } }
 
@@ -96,10 +153,19 @@ namespace TypeRight.Addin
             {
                 Log("COMAddIn.Object 设置失败: " + ex.Message);
             }
+
+            Log("Version: " + typeof(TypeRightAddin).Assembly.GetName().Version.ToString(3));
         }
 
         private void Application_WindowSelectionChange(NetOffice.WordApi.Selection selection)
         {
+            if (!_firstRunChecked)
+            {
+                _firstRunChecked = true;
+                // 首次运行提示挂在用户第一次操作时弹（OnConnection 时机太早，
+                // Word 窗口尚未建好，SetTimer 队列会拿不到 hwnd）
+                ShowFirstRunTipIfDue();
+            }
             if (_prewarmQueued == false)
             {
                 _prewarmQueued = true;
@@ -228,6 +294,11 @@ namespace TypeRight.Addin
             Controller.OpenSettings();
         }
 
+        public void OnHelp(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.ShowHelp();
+        }
+
         // ── 自动化验证钩子（测试脚本经 COMAddIn.Object 调用，不在用户界面暴露）──
         // 跨进程 COM 调用落在 RPC 线程；实测该线程与事件回调线程上 Word COM 均不可靠
         // （Range.Information(wdWithInTable) 返回假值）。用 SetTimer 挂到 Word 窗口：
@@ -236,6 +307,7 @@ namespace TypeRight.Addin
         private Action _pendingAutomation;
         private Win32TimerProc _timerProc;   // 持引用防 GC 回收原生回调桩
         private bool _prewarmQueued;         // 浮条空闲预热只排一次
+        private bool _firstRunChecked;       // 首次运行提示只查一次
 
         private delegate void Win32TimerProc(IntPtr hWnd, uint msg, IntPtr idEvent, uint dwTime);
 

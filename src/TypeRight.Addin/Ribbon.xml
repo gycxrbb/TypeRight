@@ -31,6 +31,11 @@
                     getImage="OnGetImage"
                     onAction="OnProfilesManage" />
           </menu>
+          <button id="btnHelp" size="small" label="使用说明"
+                  screentip="三步用法 / 诊断日志 / 版本信息"
+                  supertip="快速上手三步：光标点进段落 → 同类选择 → 浮动条改格式（Esc 关闭）。&#10;遇到问题可在此打开诊断日志。"
+                  getImage="OnGetImage"
+                  onAction="OnHelp" />
         </group>
       </tab>
     </tabs>

@@ -643,6 +643,22 @@ namespace TypeRight.Addin.Controllers
             }
         }
 
+        /// <summary>使用说明窗（三步用法 + 诊断日志 + 版本）。</summary>
+        public void ShowHelp()
+        {
+            try
+            {
+                var win = new HelpWindow(this);
+                win.Show();
+                TypeRightAddin.Log("ShowHelp: v" + typeof(HelpWindow).Assembly.GetName().Version.ToString(3));
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("ShowHelp: " + ex);
+                ShowToast("打开使用说明失败：" + ex.Message);
+            }
+        }
+
         public int PendingOpCount { get { return _docOps.Count; } }
 
         // ───────────────────────── 基础 ─────────────────────────
