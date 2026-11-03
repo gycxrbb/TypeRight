@@ -1,0 +1,21 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build package
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/package-release.ps1
+
+      - name: Attach to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/TypeRight-v*.zip
+          generate_release_notes: true

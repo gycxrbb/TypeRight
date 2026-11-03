@@ -1,61 +1,116 @@
-# TypeRight — Word 智能排版插件
+# TypeRight — Word 指认式批量排版插件
 
-> **指认一个样本 → 一键选中全文同类段落 → 统一改格式**；公式一键转公式对象；操作可存为方案复用。
-> PRD v2.0（见根目录 PRD 文档）。设计原则：所见即所得、最小界面（Ribbon 3 按钮 + 右键菜单）、确定性签名匹配、每步独立撤销、规范兜底（西文自动 TNR / 公式 Cambria Math）。
+> **光标点一下，全文同类段落一次改齐。**
+> 同类选择（按格式签名全文匹配）· 纯文本公式一键转公式对象 · 操作存为方案下份文档一键重放
 
-## 快速开始
+一个 COM 加载项，给讲义 / 试卷 / 笔记这类"大量段落格式一致"的 Word 文档用：不用宏、不逐段刷格式、所见即所得、每步可撤销。
+
+**性能实测**（254 处公式的真实讲义，进程内）：公式转换 47s → **7.8s**；千段全文匹配 ~0.5s。
+
+---
+
+## ① 我只想装来用
+
+### 环境要求
+
+| | |
+|---|---|
+| ✔ 支持 | Windows 10 1903+ / Win11 + **Microsoft Word 桌面版** 2016 / 2019 / 2021 / 365（32/64 位均可） |
+| ✘ 不支持 | **WPS**、Word 网页版、Mac（WPS 不加载 Word COM 加载项，平台限制） |
+| 依赖 | .NET Framework 4.8（Win10 1903+ 一般自带，安装器自动检测） |
+
+### 安装（免管理员，3 步）
+
+1. 到本仓库 **Releases** 页下载最新 `TypeRight-vX.Y.Z.zip`（或从群里拿）
+2. 关闭所有 Word 窗口，解压后双击 **install.bat**
+3. 启动 Word → 功能区出现「TypeRight」选项卡即成功（首次启动有三步用法提示）
+
+### 三步上手
+
+1. 光标点进一个段落（或选中一段文字）
+2. 功能区「TypeRight」→ **同类选择**（右键菜单也有）
+3. 浮动条上改字体 / 字号（A⁻ A⁺）/ 加粗 / 斜体 / 下划线 / 删除线 / 颜色——**全部同类段落同时生效**
+   - `Esc` 或点击别处关闭浮动条；「**下一处 ⤵**」把命中处设为真选区，可直接用 Word 原生「开始」选项卡 / `Ctrl+D` 调该处
+   - 「匹配」行可切宽松模式（忽略字号 / 颜色 / 加粗后实时重算）
+   - **公式转换**：`ax²+bx+c=0` 这类纯文本全文批量转可编辑公式对象，失败片段原样保留
+   - **方案**：改过 2 步以上可整套存为方案，下一份同类文档一键回放
+
+### 常见问题
+
+- **功能区没有 TypeRight 选项卡？** 关掉所有 Word，双击包里的 `repair.bat`，再开 Word（系统清理工具会抹加载项注册、Word 崩溃会自动禁用加载项，repair 一键恢复）。
+- **360 / 火绒弹窗？** 选"信任 / 允许"（未做商业代码签名，首次询问属正常；插件完全离线，不联网不收集数据）。
+- **想反馈问题？** 选项卡「使用说明」→「**复制诊断信息**」→ 粘贴发给作者（自动带版本 + 最近日志）。
+- **卸载**：双击 `uninstall.bat`。
+
+---
+
+## ② 我是开发者（源码二次开发 / 学习）
+
+### 技术栈与架构
+
+- **.NET Framework 4.8 + NetOffice**（COM Add-in，免 VSTO 运行时）+ WPF（浮动条/窗口）+ C#
+- `src/TypeRight.Core`——无 UI 的核心库：
+  - `Signature/` **格式签名匹配**：5 锚点模型（首字符 / 25%/50%/75% 中段 / 尾字符 × 字体·字号·加粗·颜色），未知值不与任何值相等（宁少勿错）；引导句感知单元匹配（★ 导读框这类"行首标题句 + 正文"同段混合体拆成两个匹配单元）；全程公式区感知（锚点跳过 OMML 区，公式化后的文档匹配不退化）
+  - `Signature/BatchFormatter.cs` **批量格式执行**：幂等写入（值没变不写）、字号护栏、每批一个 UndoRecord、区间自动避开公式区
+  - `Formatting/FormulaConverter.cs` + `Formulas/` **公式转换三阶段流水线**：全文规划（纯位置切分）→ 全部公式合并一个 docx、隐藏草稿一次装载、降序批量 `FormattedText` 注入 → 文档级 O(1) 终检、失败逐项回退（MathML → Office 自带 MML2OMML.XSL → OMML）
+  - `Profiles/` 方案存回放；`Classification/`、`Roles/` 语义分析资产（P2 封存）
+- `src/TypeRight.Addin`——Ribbon / 右键菜单 / 浮动格式条 / 主题跟随宿主 Word（屏幕实测检测）/ 会话管理
+- 测试资产同步：`Word智能排版插件_PRD.md`（产品规格）、`tests/TypeRight_测试验收规格.md`（21 个验收用例的口径）
+
+### 构建与开发安装
 
 ```powershell
-# 安装（管理员：HKLM；非管理员：HKCU）
+# 单元测试（45 个）
+dotnet test tests\TypeRight.Core.Tests\TypeRight.Core.Tests.csproj
+
+# 开发安装（构建 + 发布到 %LOCALAPPDATA%\TypeRight\Addin + HKCU 注册）
 powershell -ExecutionPolicy Bypass -File tools\install.ps1
-# 卸载
-powershell -ExecutionPolicy Bypass -File tools\uninstall.ps1
+
+# 全量验收（21 用例，真实讲义 + 黄金文件；DCOM 环境约 30-40 分钟）
+tests\TypeRight.Acceptance\bin\Debug\TypeRight.Acceptance.exe
+
+# 单独取证：p9 = 公式化后匹配保真 + 字号零漏网（Program.cs 里有 p1-p9 全套）
+tests\TypeRight.Acceptance\bin\Debug\TypeRight.Acceptance.exe p9
 ```
 
-安装后启动 Word → 功能区「**TypeRight**」选项卡：
+### 发布流程（自动）
 
-1. **同类选择**（或右键菜单同名项）：光标点进任一段落 → 点按钮 → 同款格式的段落全部高亮命中 → 段落旁浮动条上选中文字体即批量应用；命中不够就在浮动条上勾「忽略字号/颜色/加粗」实时重算
-2. **公式转换**：全文纯文本公式（`ax²+bx+c=0`）批量转 Word 公式对象，单行提示「已转换 N 处，失败 M 处」，失败原文保留并列出定位
-3. **方案**：≥2 步批量操作后可「存为方案」；下一份同类文档打开 → 方案面板 → 应用 → 规则逐条回放 + 兜底规则 + 公式转换，一个撤销单元
-
-诊断日志：`%LOCALAPPDATA%\TypeRight\addin-log.txt`（含同类匹配耗时实测）；方案目录：`%APPDATA%\TypeRight\profiles\`。
-
-## 核心机制（PRD v2 §2）
-
-- **格式签名**：段落首个非空 run 的有效格式元组 `(中文字体, 西文字体, 字号, 加粗, 斜体, 颜色, 对齐)`。只在首个可见字符的单字符区间上读取——段落级 Font 读取会触发 Word 全 run 聚合（长段落 ~15ms/段）
-- **同类段落**：签名全等（严格）；浮动条勾选忽略维度后实时重算（宽松）
-- **撤销粒度**：每个取值应用 = 1 个 `UndoRecord`；公式转换、应用方案各自独立
-- **中西文联动（P0-3）**：选中文字体时 `NameAscii/NameOther` 自动写 Times New Roman（设置页可关/可改）
-- **方案 Schema v2**：`rules[{order, match(签名+ignore), apply(null=保持源值)}]` + 末位 `catchAll` 兜底 + `convertFormulas`；字段级校验错误定位
-
-## 架构
-
-```
-src/
-├── TypeRight.Core/
-│   ├── Signature/          # FormatSignature（提取/比较）SimilarSelector（匹配+高亮会话）BatchFormatter（批量应用+UndoRecord）
-│   ├── Formatting/         # FormulaConverter（§6 公式引擎，规格不变）SampleDocBuilder WordFormatUtils
-│   ├── Profiles/           # ProfileV2（Schema v2 + 校验 + 存储/导入导出）
-│   ├── Scanning/ Classification/  # v1 语义引擎（R1-R12）——PRD §13.1 封存为 P2 资产
-│   └── Settings.cs         # 三项设置 + 方案目录
-├── TypeRight.Addin/        # Ribbon 3 按钮 + ContextMenuText + FloatBar（浮动格式条）+ Toast + 方案/设置窗口
-└── TypeRight.SmokeTest/    # 真实 Word 黄金旅程（同类选择命中数/撤销粒度/公式计数/方案回放/幂等）
-tests/                      # 40 个纯逻辑单测（签名比较/宽松维度/方案校验/JSON 往返）
-tools/install.ps1           # 部署 %LOCALAPPDATA%\TypeRight\Addin + COM 注册
-```
-
-## 测试
+推一个 `v*` tag 即自动构建并发布：
 
 ```powershell
-dotnet test TypeRight.sln                      # 40 单测
-dotnet run --project src\TypeRight.SmokeTest   # 真实 Word 端到端（黄金旅程）
+git tag v0.2.1 && git push origin v0.2.1   # → GitHub Actions 构建 → Release 挂载安装包 zip
 ```
 
-**性能**：进程内实测（1000 段文档 + addin-log 计时）**同类匹配 532ms**，达 PRD 验收线（<1s）。两个关键实现点：段落遍历必须用枚举器（`Paragraphs[i]` 索引器是 O(n) 重扫，千段 O(n²)≈9s）；对齐读取走探针区间的 `ParagraphFormat`（段落代理的 `Paragraph.Alignment` 实测 ~1.5ms/次）。耗时分解埋点见 `FormatSignatureReader.Ticks*`，随 `同类匹配` 日志行输出。冒烟测试因走进程外 DCOM 仅作参考值。
+流水线：`.github/workflows/release.yml`（windows runner 上跑 `tools/package-release.ps1` → 产物 `TypeRight-v*.zip` 附到 Release）。手动出包也行：`powershell -File tools\package-release.ps1`。
 
-## 已知边界（P1/P2）
+### 这个项目里值得看的东西（Word COM 避坑实录）
 
-- 匹配高亮用临时黄色高亮呈现（原本有高亮的段落不参与标记以免无法精确还原）；高亮组包为独立撤销记录「TypeRight 匹配标记」
-- v1 语义识别引擎 / LLM / 预览面板：按 PRD §11 封存（代码保留在 Core/Scanning、Core/Classification）
-- CTP 停靠任务窗格：v2 无任务窗格需求（PRD 明确无），相关代码已随 v1 移除
-- MML2OMML.XSL 兜底管线已封装（`FormulaConverter.MathmlToOmml`），结构化 MathML 生成器属 P2
+踩过的坑都写在代码注释与提交历史里，挑几个狠的：
+
+- `Range.Information(wdWithInTable)` 在进程内部分场景返回**假值**（匹配归零）→ 改按 `doc.Tables` 区间位置判定
+- `Font.Bold/Size` 存在间歇性垃圾值、`Font.Name` 对部分区间读取抖动 → 重读稳定化 + 中段锚点不比字体
+- 跨段落/单元格结束标记设置高亮会**扩散到整段** → 区间排除结束标记
+- 每个公式 `Documents.Open` 一次临时文档 = 窗口频闪 + ~150ms/个 → 隐藏草稿文档一次装载复用
+- `Paragraphs[i]` 索引器 O(n) 重扫（千段 O(n²)≈9s）→ 一律枚举器
+- COM 自动化语境下跨线程调用不可靠 → `SetTimer` 挂 Word 窗口、`WM_TIMER` 回调落在 Word UI 线程
+
+### 已知限制（设计决定）
+
+- 中段锚点不比对字体名（Word 读取抖动，为不误判的取舍）；段落中间个别字符的字体差异不参与同类判定
+- 方案回放按整段匹配（引导句感知目前只在"同类选择"生效）
+- 公式转换中括号不配对等不可解析片段原样保留为文本
+
+---
+
+## 目录导览
+
+```
+src/TypeRight.Core/          核心库（签名匹配 / 批量格式 / 公式管线 / 方案）
+src/TypeRight.Addin/         COM 加载项（Ribbon / 浮条 / 会话 / 主题）
+tests/TypeRight.Core.Tests/  45 个单元测试
+tests/TypeRight.Acceptance/  21 个验收用例 + DiagP1-P9 取证工具
+tools/                       install / uninstall / package-release / dist-scripts
+Word智能排版插件_PRD.md      产品规格（v2.0）
+```
+
+仅供学习交流。二次开发请注明出处。
