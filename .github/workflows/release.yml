@@ -7,6 +7,8 @@ on:
 jobs:
   build-release:
     runs-on: windows-latest
+    permissions:
+      contents: write   # 创建 Release / 上传产物需要写权限（新仓库默认只读）
     steps:
       - uses: actions/checkout@v4
 
