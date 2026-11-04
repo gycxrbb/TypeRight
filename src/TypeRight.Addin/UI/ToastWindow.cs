@@ -105,11 +105,11 @@ namespace TypeRight.Addin.UI
         {
             try
             {
-                IntPtr hwnd = new IntPtr(app.ActiveWindow.Hwnd);
+                IntPtr hwnd = WordWindow.Get(app);
                 RECT r;
                 if (GetWindowRect(hwnd, out r))
                 {
-                    double dpi = GetDpiForWindow(hwnd) / 96.0;
+                    double dpi = DpiScale(hwnd);
                     Left = r.Right / dpi - Width - 28;
                     Top = r.Bottom / dpi - 160;
                     if (Left < 0) Left = 40;
@@ -135,6 +135,17 @@ namespace TypeRight.Addin.UI
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT { public int Left, Top, Right, Bottom; }
+
+        /// <summary>GetDpiForWindow 是 Win10 1607+ API（Win7/8 上入口点不存在抛异常）→ GDI DpiX 兜底。</summary>
+        private static double DpiScale(IntPtr hwnd)
+        {
+            try { return GetDpiForWindow(hwnd) / 96.0; }
+            catch
+            {
+                try { using (var g = System.Drawing.Graphics.FromHwnd(hwnd)) return g.DpiX / 96.0; }
+                catch { return 1.0; }
+            }
+        }
 
         [DllImport("user32.dll")]
         private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);

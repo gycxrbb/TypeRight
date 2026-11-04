@@ -171,14 +171,13 @@ namespace TypeRight.Addin.Controllers
             // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈；批量写期间关屏幕刷新防闪烁卡顿
             try
             {
-                var undo = App.UndoRecord;
-                undo.StartCustomRecord("TypeRight 匹配标记");
+                var undo = WordCompat.BeginUndo(App, "TypeRight 匹配标记");
                 bool screenOff = false;
                 try { App.ScreenUpdating = false; screenOff = true; } catch { }
                 try { _session.Highlights.ApplyUnits(result); }
                 finally
                 {
-                    undo.EndCustomRecord();
+                    WordCompat.EndUndo(undo);
                     if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
                 }
             }
@@ -278,10 +277,9 @@ namespace TypeRight.Addin.Controllers
             {
                 try
                 {
-                    var undo = App.UndoRecord;
-                    undo.StartCustomRecord("TypeRight 匹配标记还原");
+                    var undo = WordCompat.BeginUndo(App, "TypeRight 匹配标记还原");
                     try { _session.Highlights.Clear(); }
-                    finally { undo.EndCustomRecord(); }
+                    finally { WordCompat.EndUndo(undo); }
                 }
                 catch { }
                 _session = null;
@@ -355,8 +353,7 @@ namespace TypeRight.Addin.Controllers
 
                 bool screenOff = false;
                 try { App.ScreenUpdating = false; screenOff = true; } catch { }
-                var undo = App.UndoRecord;
-                undo.StartCustomRecord("公式转换");
+                var undo = WordCompat.BeginUndo(App, "公式转换");
                 FormulaStats stats;
                 try
                 {
@@ -365,7 +362,7 @@ namespace TypeRight.Addin.Controllers
                 }
                 finally
                 {
-                    try { undo.EndCustomRecord(); } catch { }
+                    WordCompat.EndUndo(undo);
                     if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
                 }
 
@@ -467,8 +464,7 @@ namespace TypeRight.Addin.Controllers
 
             bool screenOff = false;
             try { App.ScreenUpdating = false; screenOff = true; } catch { }
-            var undo = App.UndoRecord;
-            undo.StartCustomRecord("应用方案「" + profile.Name + "」");
+            var undo = WordCompat.BeginUndo(App, "应用方案「" + profile.Name + "」");
             try
             {
                 foreach (ProfileRule rule in profile.Rules.OrderBy(r => r.Order))
@@ -518,7 +514,7 @@ namespace TypeRight.Addin.Controllers
             }
             finally
             {
-                try { undo.EndCustomRecord(); } catch { }
+                WordCompat.EndUndo(undo);
                 if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
             }
 

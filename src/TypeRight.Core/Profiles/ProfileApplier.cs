@@ -79,8 +79,7 @@ namespace TypeRight.Profiles
 
             bool screenOff = false;
             try { app.ScreenUpdating = false; screenOff = true; } catch { }
-            var undo = app.UndoRecord;
-            undo.StartCustomRecord("应用方案「" + profile.Name + "」");
+            var undo = WordCompat.BeginUndo(app, "应用方案「" + profile.Name + "」");
             try
             {
                 // 单遍收集段落（签名 + 表格分区），规则在内存中匹配（性能：避免逐规则全文档扫描）
@@ -147,7 +146,7 @@ namespace TypeRight.Profiles
             }
             finally
             {
-                try { undo.EndCustomRecord(); } catch { }
+                WordCompat.EndUndo(undo);
                 if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
             }
             return report;

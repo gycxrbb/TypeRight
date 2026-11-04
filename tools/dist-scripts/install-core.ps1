@@ -1,5 +1,7 @@
 ﻿# TypeRight 用户侧安装核心（install.bat 调用；免管理员，HKCU 注册）
 $ErrorActionPreference = 'Stop'
+# Win7 ships PowerShell 2.0 which lacks $PSScriptRoot (PS 3.0+); old-machine fallback
+if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $root = Split-Path -Parent $PSScriptRoot   # 包根目录（files\ 的上级）
 $srcDir = Join-Path $root 'files'
 $deployDir = Join-Path $env:LOCALAPPDATA 'TypeRight\Addin'

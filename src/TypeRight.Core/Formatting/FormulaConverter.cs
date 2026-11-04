@@ -75,8 +75,12 @@ namespace TypeRight.Formatting
             foreach (string root in new[] { progFiles, progFilesX86 })
             {
                 if (string.IsNullOrEmpty(root)) continue;
+                // Office16=2016+/365（C2R 装法在 root\ 下），Office15=2013，Office14=2010（MSI 装法）
                 candidates.Add(Path.Combine(root, @"Microsoft Office\root\Office16\MML2OMML.XSL"));
                 candidates.Add(Path.Combine(root, @"Microsoft Office\Office16\MML2OMML.XSL"));
+                candidates.Add(Path.Combine(root, @"Microsoft Office\root\Office15\MML2OMML.XSL"));
+                candidates.Add(Path.Combine(root, @"Microsoft Office\Office15\MML2OMML.XSL"));
+                candidates.Add(Path.Combine(root, @"Microsoft Office\Office14\MML2OMML.XSL"));
             }
             foreach (string c in candidates)
                 if (File.Exists(c)) return c;

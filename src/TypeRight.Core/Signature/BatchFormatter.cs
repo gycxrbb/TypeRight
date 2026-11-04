@@ -60,12 +60,8 @@ namespace TypeRight.Signature
             bool screenOff = false;
             try { app.ScreenUpdating = false; screenOff = true; } catch { }
 
-            UndoRecord undo = null;
-            if (wrapUndo)
-            {
-                undo = app.UndoRecord;
-                undo.StartCustomRecord(stats.UndoName);
-            }
+            // Word 2010 无 Application.UndoRecord（2013+ 才有）→ WordCompat 内降级为普通多条撤销
+            UndoRecord undo = wrapUndo ? WordCompat.BeginUndo(app, stats.UndoName) : null;
             try
             {
                 foreach (Paragraph p in paragraphs)
@@ -79,7 +75,7 @@ namespace TypeRight.Signature
             }
             finally
             {
-                if (undo != null) { try { undo.EndCustomRecord(); } catch { } }
+                WordCompat.EndUndo(undo);
                 if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
             }
             return stats;
@@ -318,12 +314,8 @@ namespace TypeRight.Signature
             bool screenOff = false;
             try { app.ScreenUpdating = false; screenOff = true; } catch { }
 
-            UndoRecord undo = null;
-            if (wrapUndo)
-            {
-                undo = app.UndoRecord;
-                undo.StartCustomRecord(stats.UndoName);
-            }
+            // Word 2010 无 Application.UndoRecord（2013+ 才有）→ WordCompat 内降级为普通多条撤销
+            UndoRecord undo = wrapUndo ? WordCompat.BeginUndo(app, stats.UndoName) : null;
             try
             {
                 foreach (MatchUnit u in units)
@@ -337,7 +329,7 @@ namespace TypeRight.Signature
             }
             finally
             {
-                if (undo != null) { try { undo.EndCustomRecord(); } catch { } }
+                WordCompat.EndUndo(undo);
                 if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
             }
             return stats;

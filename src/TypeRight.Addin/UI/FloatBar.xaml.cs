@@ -130,11 +130,10 @@ namespace TypeRight.Addin.UI
         /// <summary>兜底：Word 活动窗口中央偏下（不是屏幕中央——多显示器下更贴近视线）。</summary>
         private void CenterOverWordWindow(WdApplication app)
         {
-            int hwnd = 0;
-            try { hwnd = app.ActiveWindow.Hwnd; } catch { }
-            if (hwnd == 0) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
+            IntPtr hwnd = WordWindow.Get(app);
+            if (hwnd == IntPtr.Zero) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
             var r = new Win32Rect();
-            if (!GetWindowRect(new IntPtr(hwnd), out r)) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
+            if (!GetWindowRect(hwnd, out r)) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
             double scale = GetDpiScale();
             double monW = System.Windows.Forms.Screen.FromPoint(
                 new System.Drawing.Point((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2)).Bounds.Width / scale;
@@ -328,7 +327,7 @@ namespace TypeRight.Addin.UI
         {
             try
             {
-                IntPtr hwnd = new IntPtr(_controller.App.ActiveWindow.Hwnd);
+                IntPtr hwnd = WordWindow.Get(_controller.App);
                 if (hwnd != IntPtr.Zero)
                 {
                     var helper = new WindowInteropHelper(this);

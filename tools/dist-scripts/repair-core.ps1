@@ -1,6 +1,8 @@
 ﻿# TypeRight 修复（功能区选项卡消失时双击 repair.bat）
 # 场景：系统清理工具抹掉注册表 / Word 崩溃后把加载项禁用（LoadBehavior 被置 2）
 $ErrorActionPreference = 'Stop'
+# Win7 ships PowerShell 2.0 which lacks $PSScriptRoot (PS 3.0+); old-machine fallback
+if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $root = Split-Path -Parent $PSScriptRoot
 $srcDir = Join-Path $root 'files'
 $deployDir = Join-Path $env:LOCALAPPDATA 'TypeRight\Addin'

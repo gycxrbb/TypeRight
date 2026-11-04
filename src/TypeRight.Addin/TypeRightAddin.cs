@@ -155,6 +155,12 @@ namespace TypeRight.Addin
             }
 
             Log("Version: " + typeof(TypeRightAddin).Assembly.GetName().Version.ToString(3));
+            try
+            {
+                int major = WordCompat.MajorVersion(Application);
+                Log("Host Word: " + Application.Version + (major == 14 ? "（2010 兼容模式：无自定义撤销）" : major == 15 ? "（2013）" : ""));
+            }
+            catch { }
         }
 
         private void Application_WindowSelectionChange(NetOffice.WordApi.Selection selection)
@@ -165,6 +171,17 @@ namespace TypeRight.Addin
                 // 首次运行提示挂在用户第一次操作时弹（OnConnection 时机太早，
                 // Word 窗口尚未建好，SetTimer 队列会拿不到 hwnd）
                 ShowFirstRunTipIfDue();
+            }
+            if (!_hostCompatNoted)
+            {
+                _hostCompatNoted = true;
+                // Word 2010：UndoRecord 不存在 → 批量操作的撤销退化为多条记录，主动告知一次
+                try
+                {
+                    if (WordCompat.MajorVersion(Application) == 14)
+                        Controller.ShowToast("Word 2010 兼容模式：功能全部可用；仅撤销粒度降级（一次批量修改需多按几次 Ctrl+Z 才能完全回退）。", 8000);
+                }
+                catch { }
             }
             if (_prewarmQueued == false)
             {
@@ -308,6 +325,7 @@ namespace TypeRight.Addin
         private Win32TimerProc _timerProc;   // 持引用防 GC 回收原生回调桩
         private bool _prewarmQueued;         // 浮条空闲预热只排一次
         private bool _firstRunChecked;       // 首次运行提示只查一次
+        private bool _hostCompatNoted;       // 老版本兼容提示只弹一次
 
         private delegate void Win32TimerProc(IntPtr hWnd, uint msg, IntPtr idEvent, uint dwTime);
 
@@ -351,8 +369,7 @@ namespace TypeRight.Addin
             _pendingAutomation = action;
             try
             {
-                IntPtr hwnd = IntPtr.Zero;
-                try { hwnd = new IntPtr(Application.ActiveWindow.Hwnd); } catch { }
+                IntPtr hwnd = UI.WordWindow.Get(Application);   // 2013+ 走对象模型；老 Word 走 FindWindow 兜底
                 if (hwnd == IntPtr.Zero) { Log("queue: no word hwnd"); return; }
                 _timerProc = OnAutomationTimer;
                 SetTimer(hwnd, AutomationTimerId, delayMs, _timerProc);

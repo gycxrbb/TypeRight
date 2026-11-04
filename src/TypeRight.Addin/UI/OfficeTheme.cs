@@ -58,8 +58,7 @@ namespace TypeRight.Addin.UI
             ok = false;
             try
             {
-                IntPtr hwnd = IntPtr.Zero;
-                try { hwnd = new IntPtr(app.ActiveWindow.Hwnd); } catch { }
+                IntPtr hwnd = WordWindow.Get(app);
                 if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return OfficeThemeKind.Light;
 
                 RECT r;
