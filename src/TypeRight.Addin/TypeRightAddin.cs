@@ -232,11 +232,22 @@ namespace TypeRight.Addin
         {
             try
             {
+                // 诊断旁路：部署目录存在 Ribbon.Debug.xml 时优先使用（排障专用，正式包不带此文件）
+                string debug = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(
+                    new Uri(typeof(TypeRightAddin).Assembly.CodeBase).LocalPath), "Ribbon.Debug.xml");
+                if (System.IO.File.Exists(debug))
+                {
+                    string dx = System.IO.File.ReadAllText(debug, System.Text.Encoding.UTF8);
+                    Log("GetCustomUI(" + ribbonId + ") DEBUG旁路 -> " + dx.Length + " 字符");
+                    return dx;
+                }
                 Assembly asm = typeof(TypeRightAddin).Assembly;
                 using (var stream = asm.GetManifestResourceStream("TypeRight.Addin.Ribbon.xml"))
                 using (var reader = new System.IO.StreamReader(stream, System.Text.Encoding.UTF8))
                 {
-                    return reader.ReadToEnd();
+                    string xml = reader.ReadToEnd();
+                    Log("GetCustomUI(" + ribbonId + ") -> " + xml.Length + " 字符");   // 诊断：Word 是否向插件要过 Ribbon XML
+                    return xml;
                 }
             }
             catch (Exception ex)
@@ -250,6 +261,7 @@ namespace TypeRight.Addin
 
         public void OnRibbonLoad(NetOffice.OfficeApi.IRibbonUI ribbonUi)
         {
+            Log("Ribbon onLoad");   // 诊断：Word 是否真正实例化了功能区（XML 被采纳的标志）
             _ribbon = ribbonUi;
         }
 

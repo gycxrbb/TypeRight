@@ -1,0 +1,90 @@
+﻿WPS COM 兼容性探针报告  2026-11-06T15:29:43
+────────────────────────────────────────────────────────────────────────
+
+【0-激活】
+  [WARN] Word.Application 归属（情报） —— CLSID={000209FF-0000-0000-C000-000000000046} Server=C:\Program Files\Microsoft Office\Root\Office16\WINWORD.EXE /Automation
+  [WARN] wps.exe 进程（启动前） —— 1 个存活（PID: 21008）
+  [PASS] CreateInstance(KWPS.Application)
+  [PASS] Visible=false
+  [PASS] DisplayAlerts=0
+  [PASS] app.Version —— 12.0
+  [PASS] app.Build —— 12.1.0.28043
+  [PASS] app.Path —— E:\WPS\12.1.0.28043\office6
+
+【A-文档/段落】
+  [PASS] Documents.Open(ReadOnly) —— E:\TypeRight\spikes\WpsProbe\out\lecture-copy.docx
+  [PASS] Paragraphs.Count —— 183
+  [PASS] Paragraphs foreach 枚举 —— 183 段
+  [PASS] Paragraph.Range.Start —— 0
+  [PASS] Paragraph.Range.End —— 35
+  [PASS] Paragraph.Range.Text —— 初三数学代数终极大统领：一元二次方程与二次函数全景精讲与降维应试秘籍\r
+  [PASS] doc.Content.End —— 8211
+  [PASS] doc.Range(a,b).Text —— 初三数学代数终极大统领：一元二次方程与二
+  [PASS] Tables.Count —— 11
+  [PASS] Tables[1].Range.Start/End —— start=71 end=323
+  [PASS] Tables[1].Cell(1,1).Range.Text —— ★ 降维打击与应试绝招：大一统核心导读：从方程到函数的认知飞跃一元二次方程与二次函数是初中代数阶段最高峰的两大支柱。方程是静态…
+  [WARN] Range.Information(21) 情报 —— NotImplementedException: 未实现该方法或操作。
+
+【B-字体读】
+  [PASS] Font.NameFarEast(单字符) —— ＭＳ 明朝
+  [PASS] Font.NameAscii(单字符) —— 微软雅黑
+  [PASS] Font.NameOther(单字符) —— 微软雅黑
+  [PASS] Font.Name(单字符) —— ＭＳ 明朝
+  [PASS] Font.Size —— 20
+  [PASS] Font.Bold —— -1
+  [PASS] Font.Italic —— 0
+  [PASS] Font.Underline —— 0
+  [PASS] Font.Color —— 6108698
+  [WARN] Font.HighlightColorIndex —— RuntimeBinderException: “System.__ComObject”未包含“HighlightColorIndex”的定义
+  [PASS] 段 Range.Font.NameFarEast —— ＭＳ 明朝
+  [PASS] 段 Range.ParagraphFormat.Alignment —— 1
+  [WARN] 热路径计时(情报) —— 183 段/3623 次 COM 读 2,402 ms（0.663 ms/次；Word 进程内基线 ~0.5s/千段）
+
+【C-格式写】
+  [PASS] Documents.Add
+  [PASS] Range.Text 赋值
+  [PASS] ScreenUpdating=false/true
+  [PASS] Font.NameFarEast=楷体
+  [PASS] Font.Name=Times New Roman
+  [PASS] Font.Size=15
+  [PASS] Font.Bold=-1
+  [PASS] Font.Italic=-1
+  [PASS] Font.Underline=1
+  [PASS] Font.Color=0x1A365D
+  [PASS] Range.HighlightColorIndex=7(黄)
+  [PASS] Range.HighlightColorIndex=0(清)
+  [PASS] ParagraphFormat.Alignment=1(中)
+  [PASS] 回读 NameFarEast=楷体? —— 楷体
+  [PASS] 回读 Size=15? —— 15
+  [PASS] 回读 Bold=-1? —— -1
+  [PASS] app.UndoRecord（情报） —— System.__ComObject
+  [PASS] doc.Undo() 兜底
+  [PASS] Undo 后 Size 回退? —— 15
+
+【D-公式】
+  [PASS] doc.OMaths（对象模型公式） —— System.__ComObject
+  [PASS] OMaths.Count —— 0
+  [WARN] OMaths.Add(range)+BuildUp —— RuntimeBinderException: “System.__ComObject”未包含“BuildUp”的定义
+  [PASS] Documents.Add(Visible:=false) 隐藏草稿
+  [PASS] InsertFile(含公式 docx)
+  [PASS] 插入后 Content.End —— 8588
+  [PASS] target.FormattedText = src.FormattedText
+  [PASS] 复制后段落计数 —— 3
+  [FAIL] OMML 往返存活 —— IOException: 文件“E:\TypeRight\spikes\WpsProbe\out\wps-roundtrip.docx”正由另一进程使用，因此该进程无法访问此文件。
+  [PASS] 往返后 OMaths.Count —— 254
+  [PASS] SaveAs2 情报 —— OK
+
+【E-UI/侧车】
+  [PASS] ActiveWindow.Hwnd —— 134340
+  [PASS] ActiveWindow.Caption —— 文字文稿1 *
+  [PASS] Selection.SetRange
+  [PASS] Selection.Text —— 在此处键入公式。
+  [PASS] COMAddIns.Count（WPS 是否有 COM 加载项体系） —— 2
+  [PASS] COMAddIns 枚举 —— PDFMaker.OfficeAddin YunOfficeAddin.YunWordConnect 
+
+【0-激活】
+  [WARN] 跳过 Quit（检测到预存 wps.exe，请自行关闭探针拉起的实例）
+  [WARN] wps.exe 进程（收尾后） —— 2 个存活（PID: 8164,27592）
+
+────────────────────────────────────────────────────────────────────────
+总计: PASS 62 / FAIL 1 / WARN 8
