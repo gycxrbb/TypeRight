@@ -53,7 +53,7 @@ namespace TypeRight.Profiles
         {
             var list = new List<ParaEntry>();
             var mathZones = TypeRight.Signature.SimilarSelector.MathZoneRanges(doc);   // 公式区感知：公式化过的文档回放不再错配
-            foreach (Paragraph p in doc.Paragraphs)
+            foreach (Paragraph p in WordCompat.ParagraphsOf(doc))
             {
                 try
                 {

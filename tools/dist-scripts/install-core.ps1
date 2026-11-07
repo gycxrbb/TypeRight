@@ -60,6 +60,25 @@ reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v Comman
 Write-Host '[4/4] 注册完成 ... OK' -ForegroundColor Green
 
 Write-Host ''
+# ── 5. WPS 支持（可选，需要管理员）──
+# WPS 是 32 位进程，需要机器级 32 位 COM 注册（用户级 32 位注册不被 Windows 解析）
+Write-Host ''
+$a = Read-Host '[可选] 启用 WPS Office 支持？（写入系统注册表会弹 UAC 提权确认；WPS 需先关闭）(y=启用 / 回车跳过)'
+if ($a -eq 'y') {
+    $wpsRunning = Get-Process wps -ErrorAction SilentlyContinue
+    if ($wpsRunning) { Write-Host '[!] 请先关闭 WPS，再重新运行安装启用。' -ForegroundColor Yellow }
+    else {
+        try {
+            Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList `
+                '-NoProfile','-ExecutionPolicy','Bypass','-File',`
+                (Join-Path $PSScriptRoot 'install-wps-elevated.ps1'), $version
+            $ok = Test-Path 'HKLM:\Software\Classes\Wow6432Node\CLSID\{6C7C9713-51A1-4A55-8C0D-3A4E5F607182}\InprocServer32'
+            if ($ok) { Write-Host '[5/5] WPS 支持：已启用（启动 WPS 即见 TypeRight 选项卡）' -ForegroundColor Green }
+            else { Write-Host '[!] WPS 注册未生效（UAC 可能被取消）' -ForegroundColor Yellow }
+        } catch { Write-Host '[!] WPS 支持启用失败（UAC 被取消？）' -ForegroundColor Yellow }
+    }
+}
+
 Write-Host '安装完成！启动（或重启）Word，功能区将出现「TypeRight」选项卡。' -ForegroundColor Green
 Write-Host '若被安全软件提示，请选择"信任/允许"（未签名插件常被询问）。'
 Write-Host '首次使用：光标点进段落 → 同类选择 → 浮动条改格式。详见 使用说明.txt'

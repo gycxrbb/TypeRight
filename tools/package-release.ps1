@@ -27,7 +27,7 @@ Copy-Item (Join-Path $staging '*') (Join-Path $pkg 'files') -Force
 # 脚本与说明（ps1/txt 重写为 UTF-8 BOM——中文脚本无 BOM 会被 PowerShell 当 ANSI 读成乱码）
 $utf8bom = New-Object System.Text.UTF8Encoding($true)
 $scriptDir = Join-Path $root 'tools\dist-scripts'
-foreach ($f in @('install-core.ps1', 'repair-core.ps1', 'uninstall-core.ps1')) {
+foreach ($f in @('install-core.ps1', 'repair-core.ps1', 'uninstall-core.ps1', 'install-wps-elevated.ps1')) {
     $text = [IO.File]::ReadAllText((Join-Path $scriptDir $f))
     [IO.File]::WriteAllText((Join-Path $pkg ("dist-scripts\" + $f)), $text, $utf8bom)
 }

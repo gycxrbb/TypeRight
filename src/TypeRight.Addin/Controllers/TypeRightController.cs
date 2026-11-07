@@ -156,7 +156,7 @@ namespace TypeRight.Addin.Controllers
                 {
                     var diagZones = SimilarSelector.MathZoneRanges(_session.Doc);
                     int diag = 0;
-                    foreach (Paragraph dp in _session.Doc.Paragraphs)
+                    foreach (Paragraph dp in WordCompat.ParagraphsOf(_session.Doc))
                     {
                         if (diag >= 6) break;
                         FormatSignature ds = FormatSignatureReader.Read(dp, diagZones);
@@ -521,7 +521,7 @@ namespace TypeRight.Addin.Controllers
             int unmatched = 0;
             try
             {
-                foreach (Paragraph p in doc.Paragraphs)
+                foreach (Paragraph p in WordCompat.ParagraphsOf(doc))
                 {
                     try
                     {

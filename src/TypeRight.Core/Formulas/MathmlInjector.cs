@@ -58,7 +58,7 @@ namespace TypeRight.Formulas
 
                 // 草稿段枚举一次（Paragraphs[i] 索引器是 O(n) 重扫，逐个索引 254 段会平方级）
                 var paras = new List<NetOffice.WordApi.Paragraph>(n);
-                foreach (NetOffice.WordApi.Paragraph sp in scratch.Paragraphs)
+                foreach (NetOffice.WordApi.Paragraph sp in WordCompat.ParagraphsOf(scratch))
                 {
                     paras.Add(sp);
                     if (paras.Count >= n) break;

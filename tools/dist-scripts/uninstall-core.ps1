@@ -17,6 +17,7 @@ while ($true) {
 
 reg delete "HKCU\Software\Classes\TypeRight.Connect" /f 2>$null
 reg delete "HKCU\Software\Classes\CLSID\$clsid" /f 2>$null
+reg delete "HKCU\Software\Classes\Wow6432Node\CLSID\$clsid" /f 2>$null
 reg delete "HKCU\Software\Classes\CLSID\$paneClsid" /f 2>$null
 reg delete "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /f 2>$null
 
@@ -26,6 +27,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.WindowsIdentity]::Get
 if ($isAdmin) {
     reg delete "HKLM\Software\Classes\TypeRight.Connect" /f 2>$null
     reg delete "HKLM\Software\Classes\CLSID\$clsid" /f 2>$null
+    reg delete "HKLM\Software\Classes\Wow6432Node\CLSID\$clsid" /f 2>$null
     reg delete "HKLM\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /f 2>$null
 }
 

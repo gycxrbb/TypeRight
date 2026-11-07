@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>WpsNetOfficeProbe</AssemblyName>
+    <RootNamespace>WpsNetOfficeProbe</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- NetOffice 包装层 vs dynamic 直调在 WPS 上的 A/B 探针 -->
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="NetOffice">
+      <HintPath>C:\Users\联想\AppData\Local\TypeRight\Addin\NetOffice.dll</HintPath>
+    </Reference>
+    <Reference Include="OfficeApi">
+      <HintPath>C:\Users\联想\AppData\Local\TypeRight\Addin\OfficeApi.dll</HintPath>
+    </Reference>
+    <Reference Include="WordApi">
+      <HintPath>C:\Users\联想\AppData\Local\TypeRight\Addin\WordApi.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

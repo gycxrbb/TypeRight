@@ -111,7 +111,7 @@ namespace TypeRight.Formatting
             List<int[]> zones = TypeRight.Signature.SimilarSelector.MathZoneRanges(_doc);   // null=无公式区
             try
             {
-                foreach (Paragraph p in _doc.Paragraphs)
+                foreach (Paragraph p in WordCompat.ParagraphsOf(_doc))
                 {
                     try
                     {
@@ -511,7 +511,7 @@ namespace TypeRight.Formatting
             {
                 bool removed = false;
                 var all = new List<Paragraph>();
-                foreach (Paragraph p in _doc.Paragraphs) all.Add(p);
+                all.AddRange(WordCompat.ParagraphsOf(_doc));
                 foreach (Paragraph p in all)
                 {
                     try
@@ -537,7 +537,7 @@ namespace TypeRight.Formatting
         public void SweepLeftovers(FormulaStats stats)
         {
             var all = new List<Paragraph>();
-            foreach (Paragraph p in _doc.Paragraphs) all.Add(p);
+            all.AddRange(WordCompat.ParagraphsOf(_doc));
             foreach (Paragraph p in all)
             {
                 ConvertParagraph(p, stats, secondPass: true);

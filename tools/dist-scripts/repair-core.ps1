@@ -45,4 +45,15 @@ reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v LoadBe
 reg add "HKCU\Software\Microsoft\Office\Word\Addins\TypeRight.Connect" /v FriendlyName /d "TypeRight 智能排版" /f | Out-Null
 
 Write-Host ''
+# WPS 支持补注册（仅当此前启用过：HKLM 32 位键存在时刷新版本号指向）
+if (Test-Path 'HKLM:\Software\Classes\Wow6432Node\CLSID\{6C7C9713-51A1-4A55-8C0D-3A4E5F607182}') {
+    try {
+        $v2 = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $deployDir 'TypeRight.Addin.dll')).Version.ToString()
+        Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList `
+            '-NoProfile','-ExecutionPolicy','Bypass','-File',`
+            (Join-Path $PSScriptRoot 'install-wps-elevated.ps1'), $v2
+        Write-Host 'WPS 32 位注册已刷新。' -ForegroundColor Green
+    } catch { }
+}
+
 Write-Host '修复完成（注册已重建、LoadBehavior 已复位）。重启 Word 即可。' -ForegroundColor Green

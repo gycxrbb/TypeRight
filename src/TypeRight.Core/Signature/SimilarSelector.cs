@@ -68,7 +68,7 @@ namespace TypeRight.Signature
             var ranges = new List<int[]>();
             try
             {
-                foreach (Table t in doc.Tables)
+                foreach (Table t in WordCompat.TablesOf(doc.Tables))
                 {
                     try { ranges.Add(new[] { t.Range.Start, t.Range.End }); } catch { }
                 }
@@ -108,9 +108,9 @@ namespace TypeRight.Signature
                 int count = doc.OMaths.Count;
                 if (count == 0) return null;
                 var zones = new List<int[]>(count);
-                for (int i = 1; i <= count; i++)
+                foreach (var m in WordCompat.OMathsOf(doc.OMaths))
                 {
-                    try { Range mr = doc.OMaths[i].Range; zones.Add(new[] { mr.Start, mr.End }); }
+                    try { Range mr = m.Range; zones.Add(new[] { mr.Start, mr.End }); }
                     catch { }
                 }
                 zones.Sort((a, b) => a[0].CompareTo(b[0]));
@@ -211,7 +211,7 @@ namespace TypeRight.Signature
             result.SampleSignature = sampleSig;
 
             List<int[]> tableRanges = TableRanges(doc);
-            foreach (Paragraph p in doc.Paragraphs)
+            foreach (Paragraph p in WordCompat.ParagraphsOf(doc))
             {
                 int pStart;
                 try { pStart = p.Range.Start; } catch { continue; }
