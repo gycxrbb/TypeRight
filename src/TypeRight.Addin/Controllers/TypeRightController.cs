@@ -55,6 +55,21 @@ namespace TypeRight.Addin.Controllers
 
         private readonly List<OpRecord> _docOps = new List<OpRecord>();
         private int _lastMatchCount;
+
+        /// <summary>当前会话命中数（浮条跳转进度显示用）。</summary>
+        public int GetMatchedCount() { return _lastMatchCount; }
+
+        /// <summary>设置跳转强调色（十六进制 RRGGBB）；持久化，会话进行中立即重涂当前处。</summary>
+        public void SetEmphasisColor(string hex)
+        {
+            try
+            {
+                _settings.EmphasisColor = hex;
+                SettingsStore.Save(_settings);
+                if (_session != null) _session.Highlights.ReapplyCurrent(_settings.EmphasisColorRgb);
+            }
+            catch (Exception ex) { TypeRightAddin.Log("SetEmphasisColor: " + ex.Message); }
+        }
         private TimeSpan _lastMatchDuration = TimeSpan.Zero;
         private string _opsDocFullName;
         private bool _saveOffered;
@@ -232,6 +247,12 @@ namespace TypeRight.Addin.Controllers
                 MatchUnit u = _session.MatchedUnits[next];
                 int end = u.End > u.Start + 1 ? u.End - 1 : u.End;   // 排除段落标记
                 App.Selection.SetRange(u.Start, end);
+                // 当前处青色突出（其余保持黄）：一次跳转 = 一组撤销记录，不刷 Ctrl+Z 栈
+                var undoMark = WordCompat.BeginUndo(App, "TypeRight 跳转标记");
+                try { _session.Highlights.MarkCurrent(u.Start, end, _settings.EmphasisColorRgb); }
+                finally { WordCompat.EndUndo(undoMark); }
+                // 跳转滚动：目标段落滚到视口顶部（WPS 无此 API 时静默退化为选区定位）
+                try { App.ActiveWindow.ScrollIntoView(App.Selection.Range, true); } catch { }
                 return next + 1;
             }
             catch (Exception ex)

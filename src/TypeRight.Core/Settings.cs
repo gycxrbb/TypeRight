@@ -18,6 +18,27 @@ namespace TypeRight
 
         /// <summary>方案存储目录。</summary>
         public string ProfilesDirectory { get; set; } = Profiles.ProfileStoreV2.DefaultDirectory;
+
+        /// <summary>跳转强调色（十六进制 RRGGBB）。柔和低饱和系，与命中黄色基底协调。</summary>
+        public string EmphasisColor { get; set; } = "#E8B34B";
+
+        /// <summary>强调色 → Word WdColor 的 BGR 整数（R + G*256 + B*65536）。解析失败回退默认蜜橙。</summary>
+        public int EmphasisColorRgb
+        {
+            get
+            {
+                try
+                {
+                    string h = (EmphasisColor ?? "").TrimStart('#');
+                    if (h.Length != 6) throw new FormatException();
+                    int r = Convert.ToInt32(h.Substring(0, 2), 16);
+                    int g = Convert.ToInt32(h.Substring(2, 2), 16);
+                    int b = Convert.ToInt32(h.Substring(4, 2), 16);
+                    return r | (g << 8) | (b << 16);
+                }
+                catch { return 0xE8 | (0xB3 << 8) | (0x4B << 16); }
+            }
+        }
     }
 
     /// <summary>设置读写。损坏时静默重建默认值。</summary>

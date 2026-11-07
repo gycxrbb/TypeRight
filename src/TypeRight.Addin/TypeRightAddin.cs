@@ -356,6 +356,12 @@ namespace TypeRight.Addin
             QueueOnWordUiThread(() => Controller.CloseSession(false));
         }
 
+        /// <summary>自动化专用：跳转到下一处命中（返回值经日志观察；验证滚动/青色标记用）。</summary>
+        public void AutomationJumpNext()
+        {
+            QueueOnWordUiThread(() => Controller.JumpToNextMatch());
+        }
+
         /// <summary>强制悬浮条主题："dark" / "darkgray" / "light" / 其他=自动检测（仅 UI，不动文档）。</summary>
         public void AutomationForceFloatTheme(string theme)
         {

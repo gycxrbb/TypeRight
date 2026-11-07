@@ -5,7 +5,7 @@
         Title="TypeRight" Width="622" SizeToContent="Height"
         WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="True"
         Topmost="False" AllowsTransparency="True" Background="Transparent"
-        Focusable="False" FontFamily="Segoe UI"
+        Focusable="False" FontFamily="Segoe UI, Microsoft YaHei UI"
         TextOptions.TextFormattingMode="Display"
         WindowStartupLocation="Manual">
 
@@ -236,9 +236,15 @@
                                VerticalAlignment="Center" Margin="0,0,7,0"/>
                     <TextBlock x:Name="TxtCount" Text="已匹配 N 段" FontSize="13" FontWeight="SemiBold"
                                Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
-                    <Button x:Name="BtnJump" Style="{StaticResource TyPlain}" Content="下一处 ⤵" FontSize="11"
+                    <Button x:Name="BtnJump" Style="{StaticResource TyPlain}" Content="下一处 ▼" FontSize="11"
                             Margin="10,0,0,0" Padding="6,1,6,1" Click="OnJumpNext" ToolTip="把下一处命中设为真选区（循环）：选中后可直接用 Word「开始」选项卡或 Ctrl+D 调格式"
                             VerticalAlignment="Center"/>
+                    <Button x:Name="BtnEmphasis" Style="{StaticResource TyPlain}" Width="24" Height="22" Margin="5,0,0,0"
+                            Click="OnEmphasisClick" ToolTip="强调色：当前跳转处的底色（其余命中保持黄色）"
+                            VerticalAlignment="Center">
+                        <Border x:Name="SwEmphasis" CornerRadius="3" Width="13" Height="13"
+                                BorderThickness="1" BorderBrush="#80FFFFFF"/>
+                    </Button>
                 </StackPanel>
                 <Button x:Name="BtnClose" Style="{StaticResource TyPlain}" Content="✕" FontSize="10.5"
                         Width="22" Height="22" Click="OnClose" ToolTip="关闭 (Esc)"
@@ -323,6 +329,9 @@
                 <TextBlock Text="Esc 关闭" FontSize="10.5" Foreground="{DynamicResource TextSecondaryBrush}"
                            VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
+            <!-- 强调色选择弹层（内容代码构建） -->
+            <Popup x:Name="PopEmphasis" StaysOpen="False" Placement="Bottom" AllowsTransparency="True"
+                   PopupAnimation="Fade"/>
         </StackPanel>
     </Border>
 </Window>

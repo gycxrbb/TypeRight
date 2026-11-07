@@ -317,6 +317,8 @@ namespace TypeRight.Signature
         {
             private readonly Document _doc;
             internal readonly List<int> TouchedStarts = new List<int>();
+            private int _curStart = -1, _curEnd = -1;   // 当前跳转处（强调色标记，跳走还原黄）
+            private bool _curShaded;                     // true=shading 方案；false=WPS 兜底青色高亮
             internal readonly List<int> TouchedEnds = new List<int>();
 
             public HighlightSession(Document doc) { _doc = doc; }
@@ -352,6 +354,7 @@ namespace TypeRight.Signature
             public int ApplyUnits(UnitMatchResult match)
             {
                 Clear();
+                _curStart = -1;
                 if (match == null) return 0;
                 int applied = 0;
                 foreach (MatchUnit u in match.Units)
@@ -374,9 +377,71 @@ namespace TypeRight.Signature
                 return applied;
             }
 
+            /// <summary>把当前跳转处标为强调色底（shading 支持任意 RGB，柔和观感；
+            /// 比高亮调色板的荧光基色好搭配）。其余命中保持黄色，跳走自动还原。
+            /// WPS 无 shading 时兜底青色高亮。会话关闭时 Clear() 连同强调色一起清除。</summary>
+            public bool MarkCurrent(int start, int end, int emphasisRgb)
+            {
+                try
+                {
+                    RestoreCurrentToYellow();
+                    Range r = _doc.Range(start, end);
+                    try
+                    {
+                        r.HighlightColorIndex = WdColorIndex.wdNoHighlight;      // 摘黄，让位强调色
+                        r.Shading.Texture = WdTextureIndex.wdTextureNone;
+                        r.Shading.BackgroundPatternColor = (WdColor)emphasisRgb;
+                        _curShaded = true;
+                    }
+                    catch
+                    {
+                        r.HighlightColorIndex = WdColorIndex.wdTurquoise;        // WPS 兜底
+                        _curShaded = false;
+                    }
+                    _curStart = start; _curEnd = end;
+                    return true;
+                }
+                catch { return false; }
+            }
+
+            /// <summary>换色时立即重涂当前处（无当前处则跳过）。</summary>
+            public void ReapplyCurrent(int emphasisRgb)
+            {
+                if (_curStart < 0) return;
+                int s = _curStart, e = _curEnd;
+                _curStart = -1;
+                MarkCurrent(s, e, emphasisRgb);
+            }
+
+            private void RestoreCurrentToYellow()
+            {
+                if (_curStart < 0) return;
+                try
+                {
+                    Range r = _doc.Range(_curStart, _curEnd);
+                    if (_curShaded)
+                    {
+                        r.Shading.BackgroundPatternColor = WdColor.wdColorAutomatic;
+                        r.Shading.Texture = WdTextureIndex.wdTextureNone;
+                    }
+                    r.HighlightColorIndex = WdColorIndex.wdYellow;
+                }
+                catch { }
+            }
+
             /// <summary>还原本次会话标记的全部高亮。</summary>
             public void Clear()
             {
+                if (_curStart >= 0 && _curShaded)
+                {
+                    try
+                    {
+                        Range cr = _doc.Range(_curStart, _curEnd);
+                        cr.Shading.BackgroundPatternColor = WdColor.wdColorAutomatic;
+                        cr.Shading.Texture = WdTextureIndex.wdTextureNone;
+                    }
+                    catch { }
+                }
                 for (int i = 0; i < TouchedStarts.Count; i++)
                 {
                     try
@@ -388,6 +453,7 @@ namespace TypeRight.Signature
                 }
                 TouchedStarts.Clear();
                 TouchedEnds.Clear();
+                _curStart = -1; _curEnd = -1; _curShaded = false;
             }
         }
     }

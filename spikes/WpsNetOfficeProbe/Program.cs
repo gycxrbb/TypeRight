@@ -112,6 +112,22 @@ namespace WpsNetOfficeProbe
                 catch (Exception ex) { Console.WriteLine("  失败: " + ex.GetType().Name + ": " + ex.Message); }
             }
 
+            if (doc != null)
+            {
+                Console.WriteLine();
+                Console.WriteLine("═══ E. NetOffice Shading 写入（对 Word/WPS 同样适用）═══");
+                try
+                {
+                    var rr = doc.Range(0, 5);
+                    Console.WriteLine("  写前 Bg=" + rr.Shading.BackgroundPatternColor);
+                    rr.Shading.Texture = NetOffice.WordApi.Enums.WdTextureIndex.wdTextureNone;
+                    rr.Shading.BackgroundPatternColor = (NetOffice.WordApi.Enums.WdColor)4961256;
+                    var rr2 = doc.Range(0, 5);
+                    Console.WriteLine("  写后 Bg=" + rr2.Shading.BackgroundPatternColor + " (期望 4961256)");
+                }
+                catch (Exception ex) { Console.WriteLine("  失败: " + ex.GetType().Name + ": " + ex.Message); }
+            }
+
             try { rawDoc.Close(false); } catch { }
             try { rawApp.Quit(); } catch { }
             Console.WriteLine("完成");

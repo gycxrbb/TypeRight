@@ -43,6 +43,7 @@ namespace TypeRight.Addin.UI
             InitializeComponent();
             _suppressEvents = false;
             _controller = controller;
+            UpdateEmphasisSwatch();   // 色块初值 = 用户设置
 
             PreviewKeyDown += OnPreviewKeyDown;
             Deactivated += OnDeactivated;
@@ -647,7 +648,80 @@ namespace TypeRight.Addin.UI
 
         private void OnJumpNext(object sender, RoutedEventArgs e)
         {
-            _controller.JumpToNextMatch();
+            int idx = _controller.JumpToNextMatch();
+            if (idx > 0)
+            {
+                int total = _controller.GetMatchedCount();
+                BtnJump.Content = string.Format("下一处 {0}/{1} ▼", idx, total);
+            }
+        }
+
+        /// <summary>强调色板：柔和低饱和系，与命中黄色基底/白纸/黑字协调。
+        /// 审美取舍：排除红（警报感）、深蓝/墨绿/深紫（黑字辨识度差）、荧光粉绿（与黄互斥）。</summary>
+        private static readonly string[] EmphasisHexes = { "#E8B34B", "#9DC3E6", "#A9D18E", "#C9A0DC" };
+        private static readonly string[] EmphasisNames = { "蜜橙", "天蓝", "薄荷", "淡紫" };
+
+        private void UpdateEmphasisSwatch()
+        {
+            try
+            {
+                SwEmphasis.Background = new SolidColorBrush(
+                    (Color)ColorConverter.ConvertFromString(_controller.Settings.EmphasisColor ?? "#E8B34B"));
+            }
+            catch { }
+        }
+
+        private bool _emphasisFilled;
+
+        private void OnEmphasisClick(object sender, RoutedEventArgs e)
+        {
+            UpdateEmphasisSwatch();
+            if (!_emphasisFilled)
+            {
+                _emphasisFilled = true;
+                var host = new StackPanel { Orientation = Orientation.Horizontal };
+                for (int i = 0; i < EmphasisHexes.Length; i++)
+                {
+                    string hex = EmphasisHexes[i];
+                    var item = new Button
+                    {
+                        Style = (Style)FindResource("TyPlain"),
+                        ToolTip = EmphasisNames[i],
+                        Padding = new Thickness(5), Margin = new Thickness(2), Cursor = Cursors.Hand
+                    };
+                    var dot = new Border
+                    {
+                        CornerRadius = new CornerRadius(3), Width = 20, Height = 14,
+                        Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)),
+                        BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Color.FromArgb(0x80, 0, 0, 0))
+                    };
+                    item.Content = dot;
+                    item.Click += (s2, e2) =>
+                    {
+                        _controller.SetEmphasisColor(hex);
+                        UpdateEmphasisSwatch();
+                        PopEmphasis.IsOpen = false;
+                    };
+                    host.Children.Add(item);
+                }
+                var panel = new StackPanel();
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "强调色（当前跳转处底色）", FontSize = 10.5, Margin = new Thickness(2, 0, 0, 4),
+                    Foreground = (Brush)FindResource("TextSecondaryBrush")
+                });
+                panel.Children.Add(host);
+                PopEmphasis.Child = new Border
+                {
+                    Background = (Brush)FindResource("PanelBrush"),
+                    BorderBrush = (Brush)FindResource("PanelBorderBrush"),
+                    BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6),
+                    Padding = new Thickness(10)
+                };
+                ((Border)PopEmphasis.Child).Child = panel;
+            }
+            PopEmphasis.PlacementTarget = BtnEmphasis;
+            PopEmphasis.IsOpen = true;
         }
 
         private void OnClose(object sender, RoutedEventArgs e)

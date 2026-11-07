@@ -261,36 +261,39 @@ namespace TypeRight.Addin.UI
             public int Unused1, Unused2, Unused3;
         }
 
-        private const int PICTYPE_BITMAP = 1;
+        private const int PICTYPE_ICON = 3;
         private static Guid IidPictureDisp = new Guid("7BF80981-BF32-101A-8BBB-00AA00300CAB");
 
-        /// <summary>WPF 位图 → IPictureDisp（32bpp 带 Alpha，功能区透明背景）。</summary>
+        /// <summary>WPF 位图 → IPictureDisp。
+        /// 关键：走 GetHicon() + PICTYPE_ICON（VSTO 同款配方）——HICON 完整携带 32bpp Alpha，
+        /// 功能区按透明渲染；此前 GetHbitmap() 路径的 Alpha 在功能区不可靠，
+        /// 透明背景整块变成灰色图层（每个图标一块"灰底板"的根因）。</summary>
         private static object ToPictureDisp(BitmapSource source)
         {
-            IntPtr hBitmap = IntPtr.Zero;
+            IntPtr hIcon = IntPtr.Zero;
             try
             {
-                hBitmap = ToHBitmap(source);
+                hIcon = ToHIcon(source);
                 var desc = new PICTDESC
                 {
                     SizeOfStruct = Marshal.SizeOf(typeof(PICTDESC)),
-                    PicType = PICTYPE_BITMAP,
-                    HBitmap = hBitmap,
+                    PicType = PICTYPE_ICON,
+                    HBitmap = hIcon,   // 联合体同槽位，此处承载 HICON
                     HPalette = IntPtr.Zero
                 };
-                // ownsPicture=true：IPicture 接管 HBITMAP，成功后无需 DeleteObject
+                // ownsPicture=true：IPicture 接管句柄，成功后无需 DestroyIcon
                 return OleCreatePictureIndirect(ref desc, ref IidPictureDisp, true);
             }
             catch
             {
-                if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+                if (hIcon != IntPtr.Zero) DestroyIcon(hIcon);
                 return null;
             }
         }
 
-        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr hIcon);
 
-        private static IntPtr ToHBitmap(BitmapSource source)
+        private static IntPtr ToHIcon(BitmapSource source)
         {
             int w = source.PixelWidth, h = source.PixelHeight;
             var premultiplied = new byte[w * h * 4];
@@ -314,7 +317,7 @@ namespace TypeRight.Addin.UI
                     System.Drawing.Imaging.PixelFormat.Format32bppArgb);
                 try { Marshal.Copy(straight, 0, data.Scan0, straight.Length); }
                 finally { bmp.UnlockBits(data); }
-                return bmp.GetHbitmap(); // 返回独立副本，bmp 可释放
+                return bmp.GetHicon();   // HICON 保留完整 Alpha（区别于 GetHbitmap 丢 Alpha）
             }
         }
 
