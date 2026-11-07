@@ -47,7 +47,7 @@
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
                                         <Border x:Name="bd" Background="{TemplateBinding Background}"
-                                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="2">
+                                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4">
                                             <Path x:Name="arrow" Data="M0,0 L4,4 8,0" Stretch="None"
                                                   Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.5"
                                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0.5,8,0.5"/>
@@ -74,12 +74,12 @@
                                    Placement="Bottom" AllowsTransparency="True" PopupAnimation="Fade" StaysOpen="False">
                                 <Border Background="{DynamicResource PopupBgBrush}"
                                         BorderBrush="{DynamicResource PopupBorderBrush}" BorderThickness="1"
-                                        CornerRadius="2" Margin="0,2,10,10" MinWidth="{TemplateBinding ActualWidth}">
+                                        CornerRadius="6" Margin="0,3,12,12" MinWidth="{TemplateBinding ActualWidth}">
                                     <Border.Effect>
-                                        <DropShadowEffect BlurRadius="7" ShadowDepth="2" Opacity="0.3"/>
+                                        <DropShadowEffect BlurRadius="10" ShadowDepth="3" Opacity="0.25"/>
                                     </Border.Effect>
                                     <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                        <ItemsPresenter Margin="2"/>
+                                        <ItemsPresenter Margin="4"/>
                                     </ScrollViewer>
                                 </Border>
                             </Popup>
@@ -99,7 +99,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBoxItem">
-                        <Border x:Name="bd" CornerRadius="2" Margin="1,0.5" Padding="8,5" Background="Transparent">
+                        <Border x:Name="bd" CornerRadius="4" Margin="1,0.5" Padding="8,5" Background="Transparent">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -127,7 +127,7 @@
                     <ControlTemplate TargetType="CheckBox">
                         <StackPanel Orientation="Horizontal" Background="Transparent">
                             <Grid VerticalAlignment="Center">
-                                <Border x:Name="box" Width="14" Height="14" CornerRadius="2"
+                                <Border x:Name="box" Width="14" Height="14" CornerRadius="3"
                                         Background="{DynamicResource InputBgBrush}"
                                         BorderBrush="{DynamicResource InputBorderBrush}" BorderThickness="1"/>
                                 <Path x:Name="check" Data="M3.2,7.4 L6,10.2 L11,3.8" Visibility="Collapsed"
@@ -166,7 +166,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="2">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -177,8 +177,8 @@
                                 <Setter TargetName="bd" Property="Background" Value="{DynamicResource PressedBrush}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentBrush}"/>
-                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ItemHoverBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="{DynamicResource DisabledBrush}"/>
@@ -199,7 +199,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="2">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -220,11 +220,11 @@
         </Style>
     </Window.Resources>
 
-    <Border Background="{DynamicResource PanelBrush}" CornerRadius="3"
+    <Border Background="{DynamicResource PanelBrush}" CornerRadius="8"
             BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
-            Margin="5,5,5,7" MouseLeftButtonDown="OnBarDragMove">
+            Margin="6,5,6,9" MouseLeftButtonDown="OnBarDragMove">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="8" ShadowDepth="2" Opacity="0.25"/>
+            <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.28"/>
         </Border.Effect>
         <StackPanel Margin="12,9,12,9">
 
@@ -242,8 +242,8 @@
                     <Button x:Name="BtnEmphasis" Style="{StaticResource TyPlain}" Width="24" Height="22" Margin="5,0,0,0"
                             Click="OnEmphasisClick" ToolTip="强调色：当前跳转处的底色（其余命中保持黄色）"
                             VerticalAlignment="Center">
-                        <Border x:Name="SwEmphasis" CornerRadius="3" Width="13" Height="13"
-                                BorderThickness="1" BorderBrush="#80FFFFFF"/>
+                        <Border x:Name="SwEmphasis" CornerRadius="4" Width="13" Height="13"
+                                BorderThickness="1" BorderBrush="{DynamicResource InputBorderBrush}"/>
                     </Button>
                 </StackPanel>
                 <Button x:Name="BtnClose" Style="{StaticResource TyPlain}" Content="✕" FontSize="10.5"

@@ -340,16 +340,25 @@ namespace TypeRight.Addin.Controllers
                     return;
                 }
 
-                Paragraph p = null;
-                try { p = selection.Range.Paragraphs[1]; }
-                catch { }
-                if (p == null) return;
-                int start = p.Range.Start;
-                foreach (MatchUnit u in _session.MatchedUnits)
+                // 会话内快速判定（2026-11-07 性能修复）：数百命中时旧写法每次光标移动都对全部
+                // 命中做 O(n) 次活 COM 比对（u.Paragraph.Range.Start × N）——输入/点击明显卡顿的根源。
+                // 改为：对缓存的单元起点（文档序天然有序）二分定位，仅对相邻 ±1 单元做活区间校验：
+                // O(log n) + ≤3 次 COM 调用。活对象跟随编辑，位置漂移可容忍。
+                int selStart;
+                try { selStart = selection.Range.Start; } catch { return; }
+                var units = _session.MatchedUnits;
+                int lo = 0, hi = units.Count - 1, idx = -1;
+                while (lo <= hi)
+                {
+                    int mid = (lo + hi) / 2;
+                    if (units[mid].Start <= selStart) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+                }
+                for (int k = Math.Max(0, idx - 1); k <= Math.Min(units.Count - 1, idx + 1); k++)
                 {
                     try
                     {
-                        if (u.Paragraph.Range.Start == start) return; // 仍在命中段内
+                        var r = units[k].Paragraph.Range;
+                        if (r.Start <= selStart && selStart < r.End) return; // 仍在命中段内
                     }
                     catch { }
                 }

@@ -428,7 +428,7 @@ namespace TypeRight.Addin.UI
                 double val = s;
                 var item = new Border
                 {
-                    Background = Brushes.Transparent, CornerRadius = new CornerRadius(3),
+                    Background = Brushes.Transparent, CornerRadius = new CornerRadius(4),
                     Margin = new Thickness(2), Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand,
                     Child = new TextBlock
                     {
@@ -447,7 +447,7 @@ namespace TypeRight.Addin.UI
             {
                 Child = new Border
                 {
-                    Background = panelBg, CornerRadius = new CornerRadius(3),
+                    Background = panelBg, CornerRadius = new CornerRadius(6),
                     BorderBrush = panelBorder, BorderThickness = new Thickness(1),
                     Padding = new Thickness(5), Child = grid
                 },
@@ -559,7 +559,7 @@ namespace TypeRight.Addin.UI
                 var swatch = new Border
                 {
                     Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString((string)p[1])),
-                    Width = 20, Height = 20, CornerRadius = new CornerRadius(3),
+                    Width = 20, Height = 20, CornerRadius = new CornerRadius(4),
                     Margin = new Thickness(3), BorderThickness = new Thickness(1),
                     BorderBrush = panelBorder, Cursor = Cursors.Hand, ToolTip = (string)p[0]
                 };
@@ -573,7 +573,7 @@ namespace TypeRight.Addin.UI
             {
                 Child = new Border
                 {
-                    Background = popupBg, CornerRadius = new CornerRadius(3),
+                    Background = popupBg, CornerRadius = new CornerRadius(6),
                     BorderBrush = popupBorder,
                     BorderThickness = new Thickness(1), Padding = new Thickness(5),
                     Child = row
@@ -691,7 +691,7 @@ namespace TypeRight.Addin.UI
                     };
                     var dot = new Border
                     {
-                        CornerRadius = new CornerRadius(3), Width = 20, Height = 14,
+                        CornerRadius = new CornerRadius(4), Width = 20, Height = 14,
                         Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)),
                         BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Color.FromArgb(0x80, 0, 0, 0))
                     };

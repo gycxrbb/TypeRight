@@ -49,7 +49,7 @@ namespace TypeRight.Addin.UI
         {
             var border = new System.Windows.Controls.Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x22, 0x2A, 0x35)),
+                Background = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2F)),
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(16, 10, 12, 10),
                 MaxWidth = 460,
@@ -78,7 +78,7 @@ namespace TypeRight.Addin.UI
                 var btn = new System.Windows.Controls.Button
                 {
                     Content = actionLabel,
-                    Background = new SolidColorBrush(Color.FromRgb(0x2B, 0x5C, 0xB8)),
+                    Background = new SolidColorBrush(Color.FromRgb(0x2F, 0x63, 0xAC)),
                     Foreground = Brushes.White,
                     FontSize = 12,
                     Padding = new Thickness(12, 4, 12, 4),

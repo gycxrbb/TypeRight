@@ -36,7 +36,10 @@ namespace TypeRight.Addin.UI
             OfficeThemeKind kind;
             bool sampled;
             OfficeThemeKind byPixels = DetectByPixels(app, out sampled);
-            kind = sampled ? byPixels : DetectByRegistry(app);
+            // 回退按宿主分流：注册表里只有 WORD 的主题键，WPS 读它是跨宿主污染
+            //（WPS 亮色 + Word 暗色 → WPS 里错误出深色浮条的根因）
+            kind = sampled ? byPixels
+                : (WordCompat.IsWps(app) ? OfficeThemeKind.Light : DetectByRegistry(app));
 
             _cached = kind;
             _cachedAt = DateTime.Now;
@@ -48,6 +51,8 @@ namespace TypeRight.Addin.UI
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
         [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+        private const uint PW_RENDERFULLCONTENT = 0x2;   // 分层/DirectComposition 内容也能抓
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT { public int Left, Top, Right, Bottom; }
@@ -66,20 +71,26 @@ namespace TypeRight.Addin.UI
                 int w = r.Right - r.Left, h = r.Bottom - r.Top;
                 if (w < 300 || h < 300) return OfficeThemeKind.Light;
 
-                // 标题栏/选项卡行永远跟随主题（“永不改页面背景”时暗色主题下文档页面仍是白色，
-                // 功能区收起后中带采样会落到页面上误判）→ 自上而下按行采样，取首个可信行。
-                using (var bmp = new System.Drawing.Bitmap(1, 1))
-                using (var g = System.Drawing.Graphics.FromImage(bmp))
+                // 采样改为 PrintWindow 抓宿主窗口自身（2026-11-07 根治）：屏幕 CopyFromScreen 在
+                // 宿主被遮挡/非前台时会采到别的窗口（回退链再读 Word 注册表 → WPS 亮色出深色条、
+                // Word 被遮挡时注册表键漂移出浅色条）。PrintWindow 与遮挡无关，永远采宿主自己的像素。
+                using (var cap = new System.Drawing.Bitmap(w, h))
+                using (var gc = System.Drawing.Graphics.FromImage(cap))
                 {
+                    IntPtr hdc = gc.GetHdc();
+                    bool printed = PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
+                    gc.ReleaseHdc(hdc);
+                    if (!printed) return OfficeThemeKind.Light;
+
+                    // 标题栏/选项卡行永远跟随主题（“永不改页面背景”时暗色主题下文档页面仍是白色）
                     foreach (double rowFrac in new[] { 0.03, 0.07, 0.13 })
                     {
-                        int y = r.Top + (int)(h * rowFrac);
+                        int y = (int)(h * rowFrac);
                         var buckets = new Dictionary<int, int>();
                         for (int fx = 0; fx < 12; fx++)
                         {
-                            int x = r.Left + (int)(w * 0.15) + (int)(w * 0.70) * fx / 11;
-                            g.CopyFromScreen(x, y, 0, 0, new System.Drawing.Size(1, 1));
-                            System.Drawing.Color c = bmp.GetPixel(0, 0);
+                            int x = (int)(w * 0.15) + (int)(w * 0.70) * fx / 11;
+                            System.Drawing.Color c = cap.GetPixel(x, y);
                             int key = ((int)c.R >> 4) << 8 | ((int)c.G >> 4) << 4 | ((int)c.B >> 4);
                             int n;
                             buckets[key] = buckets.TryGetValue(key, out n) ? n + 1 : 1;
@@ -197,72 +208,72 @@ namespace TypeRight.Addin.UI
         public Color InputBg, InputBorder, Hover, Pressed, Accent, AccentHover;
         public Color PopupBg, PopupBorder, ItemHover, Separator, Disabled;
 
-        /// <summary>黑色主题（设计稿）：深灰面板 + 浅色文字。</summary>
+        /// <summary>黑色主题：Word 深色 Fluent——中性灰阶、隐边框、唯一蓝强调（2026-11 换皮对齐宿主原生）。</summary>
         public static ThemePalette Dark()
         {
             return new ThemePalette
             {
-                Panel = C(0x2A, 0x2A, 0x2A),
-                PanelBorder = C(0x62, 0x62, 0x62),
-                Text = C(0xF2, 0xF2, 0xF2),
-                TextSecondary = C(0xB8, 0xB8, 0xB8),
-                InputBg = C(0x33, 0x33, 0x33),
-                InputBorder = C(0x6E, 0x6E, 0x6E),
-                Hover = C(0x3D, 0x3D, 0x3D),
-                Pressed = C(0x48, 0x48, 0x48),
-                Accent = C(0x4D, 0x8E, 0xF7),
-                AccentHover = C(0x6B, 0xA3, 0xFF),
-                PopupBg = C(0x2F, 0x2F, 0x2F),
-                PopupBorder = C(0x62, 0x62, 0x62),
-                ItemHover = C(0x3D, 0x3D, 0x3D),
-                Separator = C(0x3A, 0x3A, 0x3A),
-                Disabled = C(0x80, 0x80, 0x80),
+                Panel = C(0x2B, 0x2B, 0x2F),
+                PanelBorder = C(0x3F, 0x3F, 0x44),
+                Text = C(0xF3, 0xF3, 0xF3),
+                TextSecondary = C(0xAD, 0xAD, 0xB3),
+                InputBg = C(0x38, 0x38, 0x3E),
+                InputBorder = C(0x57, 0x57, 0x5E),
+                Hover = C(0x37, 0x37, 0x3D),
+                Pressed = C(0x42, 0x42, 0x4A),
+                Accent = C(0x6C, 0xA0, 0xF5),
+                AccentHover = C(0x84, 0xB0, 0xF7),
+                PopupBg = C(0x33, 0x33, 0x38),
+                PopupBorder = C(0x45, 0x45, 0x4B),
+                ItemHover = C(0x42, 0x42, 0x4A),
+                Separator = C(0x3A, 0x3A, 0x3F),
+                Disabled = C(0x77, 0x77, 0x7D),
             };
         }
 
-        /// <summary>深灰主题。</summary>
+        /// <summary>深灰主题：Word Dark Gray 档（中间调铬面，偏冷）。</summary>
         public static ThemePalette DarkGray()
         {
             return new ThemePalette
             {
-                Panel = C(0x4A, 0x4A, 0x4A),
-                PanelBorder = C(0x85, 0x85, 0x85),
+                Panel = C(0x44, 0x44, 0x4C),
+                PanelBorder = C(0x5A, 0x5A, 0x63),
                 Text = C(0xF5, 0xF5, 0xF5),
-                TextSecondary = C(0xC9, 0xC9, 0xC9),
-                InputBg = C(0x56, 0x56, 0x56),
-                InputBorder = C(0x90, 0x90, 0x90),
-                Hover = C(0x58, 0x58, 0x58),
-                Pressed = C(0x62, 0x62, 0x62),
-                Accent = C(0x7A, 0xA5, 0xEC),
-                AccentHover = C(0x8F, 0xB6, 0xF3),
-                PopupBg = C(0x50, 0x50, 0x50),
-                PopupBorder = C(0x85, 0x85, 0x85),
-                ItemHover = C(0x5C, 0x5C, 0x5C),
-                Separator = C(0x5A, 0x5A, 0x5A),
-                Disabled = C(0x9A, 0x9A, 0x9A),
+                TextSecondary = C(0xC2, 0xC2, 0xC8),
+                InputBg = C(0x50, 0x50, 0x5A),
+                InputBorder = C(0x6E, 0x6E, 0x78),
+                Hover = C(0x4E, 0x4E, 0x57),
+                Pressed = C(0x5A, 0x5A, 0x64),
+                Accent = C(0x7F, 0xA8, 0xF0),
+                AccentHover = C(0x93, 0xBA, 0xF4),
+                PopupBg = C(0x4A, 0x4A, 0x52),
+                PopupBorder = C(0x62, 0x62, 0x6B),
+                ItemHover = C(0x55, 0x55, 0x5F),
+                Separator = C(0x55, 0x55, 0x5C),
+                Disabled = C(0x9E, 0x9E, 0xA6),
             };
         }
 
-        /// <summary>浅色主题（彩色/白色）：贴近 Word 浅色功能区。</summary>
+        /// <summary>浅色主题：Word 浅色 Fluent——白面板、发丝边、菜单悬停浅蓝晕（2026-11 换皮）。</summary>
         public static ThemePalette Light()
         {
             return new ThemePalette
             {
-                Panel = C(0xFB, 0xFB, 0xFC),
-                PanelBorder = C(0xC9, 0xCD, 0xD4),
-                Text = C(0x26, 0x26, 0x26),
-                TextSecondary = C(0x6E, 0x71, 0x75),
+                Panel = C(0xFA, 0xFA, 0xFA),
+                PanelBorder = C(0xD9, 0xD9, 0xD9),
+                Text = C(0x1F, 0x1F, 0x1F),
+                TextSecondary = C(0x61, 0x61, 0x61),
                 InputBg = C(0xFF, 0xFF, 0xFF),
-                InputBorder = C(0xC4, 0xC9, 0xD0),
-                Hover = C(0xE9, 0xEB, 0xEE),
-                Pressed = C(0xDC, 0xDF, 0xE4),
+                InputBorder = C(0xC8, 0xC8, 0xC8),
+                Hover = C(0xEC, 0xEC, 0xEC),
+                Pressed = C(0xDE, 0xDE, 0xDE),
                 Accent = C(0x2B, 0x57, 0x9A),
                 AccentHover = C(0x2F, 0x63, 0xAC),
                 PopupBg = C(0xFF, 0xFF, 0xFF),
-                PopupBorder = C(0xC9, 0xCD, 0xD4),
-                ItemHover = C(0xED, 0xF1, 0xF7),
-                Separator = C(0xE5, 0xE7, 0xEB),
-                Disabled = C(0x9A, 0xA0, 0xA6),
+                PopupBorder = C(0xE1, 0xE1, 0xE1),
+                ItemHover = C(0xE8, 0xF1, 0xFB),
+                Separator = C(0xEA, 0xEA, 0xEA),
+                Disabled = C(0xA6, 0xA6, 0xA6),
             };
         }
 
