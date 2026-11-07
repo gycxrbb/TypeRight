@@ -362,6 +362,12 @@ namespace TypeRight.Addin
             QueueOnWordUiThread(() => Controller.JumpToNextMatch());
         }
 
+        /// <summary>自动化专用：直接 Invalidate 功能区（图标重取链取证）。</summary>
+        public void AutomationRefreshRibbon()
+        {
+            QueueOnWordUiThread(() => { try { _ribbon.Invalidate(); Log("ribbon invalidated (automation)"); } catch (Exception ex) { Log("invalidate: " + ex.Message); } });
+        }
+
         /// <summary>强制悬浮条主题："dark" / "darkgray" / "light" / 其他=自动检测（仅 UI，不动文档）。</summary>
         public void AutomationForceFloatTheme(string theme)
         {

@@ -83,10 +83,21 @@ namespace TypeRight
             return list;
         }
 
-        /// <summary>公式集合兼容枚举（MathZoneRanges 用；原索引器在 WPS 同样走工厂包装）。</summary>
+        /// <summary>公式集合兼容访问（MathZoneRanges 用）。
+        /// 路径取舍（2026-11-07 实测 196 公式文档）：索引器 697ms vs IEnumVARIANT 枚举 3484ms——
+        /// Word 的 OMaths 枚举器是病态慢路径（还拖慢公式区构建 ×2 次 = 用户实测 9s 的主因）；
+        /// 索引器在 Word 走快路径，WPS 抛 FactoryException 再回退枚举。</summary>
         public static List<OMath> OMathsOf(OMaths omaths)
         {
             var list = new List<OMath>();
+            try
+            {
+                int count = omaths.Count;
+                for (int i = 1; i <= count; i++)
+                    list.Add(omaths[i]);          // Word 快路径（NetOffice 索引器）
+                return list;
+            }
+            catch { list.Clear(); }                // WPS：工厂按类名解析 coclass 失败 → 枚举兜底
             try
             {
                 foreach (object item in (System.Collections.IEnumerable)omaths.UnderlyingObject)

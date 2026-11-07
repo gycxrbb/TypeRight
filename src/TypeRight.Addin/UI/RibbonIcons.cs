@@ -19,10 +19,20 @@ namespace TypeRight.Addin.UI
         // 大按钮：同类选择 / 公式转换 / 方案（菜单）；小图标：右键菜单 + 方案子项
         public static object GetImage(string controlId, OfficeThemeKind theme)
         {
-            bool small = controlId == "ctxSimilar" || controlId == "btnProfileSave" || controlId == "btnProfileManage" || controlId == "btnHelp";
-            int size = small ? 16 : 32;
-            RenderTargetBitmap bmp = Render(controlId, size, theme);
-            return ToPictureDisp(bmp);
+            try
+            {
+                bool small = controlId == "ctxSimilar" || controlId == "btnProfileSave" || controlId == "btnProfileManage" || controlId == "btnHelp";
+                int size = small ? 16 : 32;
+                RenderTargetBitmap bmp = Render(controlId, size, theme);
+                object pic = ToPictureDisp(bmp);
+                TypeRightAddin.Log("GetImage[" + controlId + "] " + theme + " -> " + (pic == null ? "NULL" : "IPicture"));
+                return pic;
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("GetImage[" + controlId + "] 异常: " + ex.Message);
+                return null;
+            }
         }
 
         // ───────── 绘制 ─────────
@@ -261,64 +271,72 @@ namespace TypeRight.Addin.UI
             public int Unused1, Unused2, Unused3;
         }
 
-        private const int PICTYPE_ICON = 3;
+        private const int PICTYPE_BITMAP = 1;
         private static Guid IidPictureDisp = new Guid("7BF80981-BF32-101A-8BBB-00AA00300CAB");
 
-        /// <summary>WPF 位图 → IPictureDisp。
-        /// 关键：走 GetHicon() + PICTYPE_ICON（VSTO 同款配方）——HICON 完整携带 32bpp Alpha，
-        /// 功能区按透明渲染；此前 GetHbitmap() 路径的 Alpha 在功能区不可靠，
-        /// 透明背景整块变成灰色图层（每个图标一块"灰底板"的根因）。</summary>
+        /// <summary>WPF 位图 → IPictureDisp（2026-11-07 定稿配方）：
+        /// CreateDIBSection 32bpp 预乘 Alpha DIB + PICTYPE_BITMAP——Excel-DNA/AddInExpress 一脉验证过的
+        /// 功能区透明位图路径，初始渲染与 Invalidate 重取后均稳定（PICTYPE_ICON 版在部分
+        /// 机器的主题翻转→Invalidate 链后图标消失，用户实测报告）。</summary>
         private static object ToPictureDisp(BitmapSource source)
         {
-            IntPtr hIcon = IntPtr.Zero;
+            IntPtr hBitmap = IntPtr.Zero;
             try
             {
-                hIcon = ToHIcon(source);
+                hBitmap = ToAlphaDib(source);
                 var desc = new PICTDESC
                 {
                     SizeOfStruct = Marshal.SizeOf(typeof(PICTDESC)),
-                    PicType = PICTYPE_ICON,
-                    HBitmap = hIcon,   // 联合体同槽位，此处承载 HICON
+                    PicType = PICTYPE_BITMAP,
+                    HBitmap = hBitmap,
                     HPalette = IntPtr.Zero
                 };
-                // ownsPicture=true：IPicture 接管句柄，成功后无需 DestroyIcon
+                // ownsPicture=true：IPicture 接管 HBITMAP，成功后无需 DeleteObject
                 return OleCreatePictureIndirect(ref desc, ref IidPictureDisp, true);
             }
             catch
             {
-                if (hIcon != IntPtr.Zero) DestroyIcon(hIcon);
+                if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
                 return null;
             }
         }
 
-        [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr hIcon);
+        [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr hObject);
 
-        private static IntPtr ToHIcon(BitmapSource source)
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BITMAPINFOHEADER
+        {
+            public uint Size; public int Width; public int Height;
+            public ushort Planes; public ushort BitCount; public uint Compression;
+            public uint SizeImage; public int XPelsPerMeter; public int YPelsPerMeter;
+            public uint ClrUsed; public uint ClrImportant;
+        }
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER bmi, uint usage,
+            out IntPtr bits, IntPtr hSection, uint offset);
+
+        /// <summary>32bpp 顶向下 预乘ARGB DIB（功能区透明的事实标准位图格式）。</summary>
+        private static IntPtr ToAlphaDib(BitmapSource source)
         {
             int w = source.PixelWidth, h = source.PixelHeight;
-            var premultiplied = new byte[w * h * 4];
-            source.CopyPixels(premultiplied, w * 4, 0);
+            var pixels = new byte[w * h * 4];
+            source.CopyPixels(pixels, w * 4, 0);   // Pbgra32：已是预乘，DIB 直接可用
 
-            // Pbgra32（预乘）→ 直 Alpha，供 GDI 32bppARGB 使用
-            var straight = new byte[w * h * 4];
-            for (int i = 0; i < premultiplied.Length; i += 4)
+            var bmi = new BITMAPINFOHEADER
             {
-                byte a = premultiplied[i + 3];
-                straight[i] = a == 0 ? (byte)0 : (byte)Math.Min(255, premultiplied[i] * 255 / a);
-                straight[i + 1] = a == 0 ? (byte)0 : (byte)Math.Min(255, premultiplied[i + 1] * 255 / a);
-                straight[i + 2] = a == 0 ? (byte)0 : (byte)Math.Min(255, premultiplied[i + 2] * 255 / a);
-                straight[i + 3] = a;
-            }
-
-            using (var bmp = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-            {
-                var rect = new System.Drawing.Rectangle(0, 0, w, h);
-                var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly,
-                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-                try { Marshal.Copy(straight, 0, data.Scan0, straight.Length); }
-                finally { bmp.UnlockBits(data); }
-                return bmp.GetHicon();   // HICON 保留完整 Alpha（区别于 GetHbitmap 丢 Alpha）
-            }
+                Size = (uint)Marshal.SizeOf(typeof(BITMAPINFOHEADER)),
+                Width = w,
+                Height = -h,                        // 顶向下，与 WPF 行序一致
+                Planes = 1,
+                BitCount = 32,
+                Compression = 0 /* BI_RGB */
+            };
+            IntPtr bits;
+            IntPtr hb = CreateDIBSection(IntPtr.Zero, ref bmi, 0 /* DIB_RGB_COLORS */, out bits, IntPtr.Zero, 0);
+            if (hb == IntPtr.Zero) throw new InvalidOperationException("CreateDIBSection failed");
+            Marshal.Copy(pixels, 0, bits, pixels.Length);
+            return hb;
         }
 
         /// <summary>导出 PNG（仅自检/设计核对用）。</summary>

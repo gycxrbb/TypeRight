@@ -109,7 +109,8 @@ namespace TypeRight.Addin.Controllers
                     return;
                 }
 
-                var sig = FormatSignatureReader.Read(sample, SimilarSelector.MathZoneRanges(doc));
+                // 预检只判有无可见文本：zones=null 省一次全套公式区构建（真实带区读取在 MatchUnits 内）
+                var sig = FormatSignatureReader.Read(sample, null);
                 TypeRightAddin.Log("SimilarSelect: sample sig = " + sig);
                 if (sig.IsEmpty)
                 {
