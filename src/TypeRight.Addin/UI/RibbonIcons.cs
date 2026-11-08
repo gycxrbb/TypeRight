@@ -68,6 +68,10 @@ namespace TypeRight.Addin.UI
                     case "btnHelp":
                         DrawHelp(dc, u, fg, acc);
                         break;
+                    case "btnTextSimilar":
+                    case "ctxTextSimilar":
+                        DrawTextMatch(dc, u, fg, acc);
+                        break;
                 }
             }
 
@@ -249,6 +253,22 @@ namespace TypeRight.Addin.UI
             q1.Freeze();
             dc.DrawGeometry(null, Pen(fg, 2.6), q1);
             dc.DrawEllipse(Solid(fg, 0.95), null, new Point(16, 21.8), 1.55, 1.55);
+            dc.Pop();
+        }
+
+        /// <summary>文本同类：左引号「 + 两行文字 + 右引号」（选中文本的视觉隐喻）。</summary>
+        private static void DrawTextMatch(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            // 左右直角引号（蓝）
+            Pen lp = Pen(acc, 2.4);
+            Line(dc, lp, 4, 6, 4, 14);
+            Line(dc, lp, 4, 6, 8, 6);
+            Line(dc, lp, 27, 18, 27, 10);
+            Line(dc, lp, 27, 18, 23, 18);
+            // 两行文本条（灰）
+            Bar(dc, Solid(fg, 0.9), 10, 9, 12, 3.2);
+            Bar(dc, Solid(fg, 0.9), 10, 16, 10, 3.2);
             dc.Pop();
         }
 

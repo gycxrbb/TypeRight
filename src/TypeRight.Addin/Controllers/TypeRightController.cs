@@ -29,6 +29,10 @@ namespace TypeRight.Addin.Controllers
         /// <summary>命中单元（引导句感知）：高亮与格式应用都作用于单元区间。</summary>
         public List<MatchUnit> MatchedUnits = new List<MatchUnit>();
         public SimilarSelector.HighlightSession Highlights;
+        /// <summary>文本同类模式（字义匹配）：单元=文本出现处而非格式段落；忽略维度等开关不适用。</summary>
+        public bool TextMode;
+        public string TextPattern;
+        public bool TextExcludeNegation = true;
     }
 
     /// <summary>一次批量格式操作（沉淀为方案规则的原材料）。</summary>
@@ -177,6 +181,25 @@ namespace TypeRight.Addin.Controllers
             }
         }
 
+        /// <summary>把命中单元集标为黄色高亮（格式/文本两种模式共用；一个撤销记录 + 关屏幕刷新）。</summary>
+        private void ApplySessionHighlights(UnitMatchResult result)
+        {
+            if (_session == null || _session.Highlights == null) return;
+            try
+            {
+                var undo = WordCompat.BeginUndo(App, "TypeRight 匹配标记");
+                bool screenOff = false;
+                try { App.ScreenUpdating = false; screenOff = true; } catch { }
+                try { _session.Highlights.ApplyUnits(result); }
+                finally
+                {
+                    WordCompat.EndUndo(undo);
+                    if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
+                }
+            }
+            catch { }
+        }
+
         /// <summary>按当前忽略维度重算命中单元集并刷新高亮/计数（引导句感知）。</summary>
         private void RecomputeMatches()
         {
@@ -210,19 +233,7 @@ namespace TypeRight.Addin.Controllers
             }
 
             // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈；批量写期间关屏幕刷新防闪烁卡顿
-            try
-            {
-                var undo = WordCompat.BeginUndo(App, "TypeRight 匹配标记");
-                bool screenOff = false;
-                try { App.ScreenUpdating = false; screenOff = true; } catch { }
-                try { _session.Highlights.ApplyUnits(result); }
-                finally
-                {
-                    WordCompat.EndUndo(undo);
-                    if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
-                }
-            }
-            catch { }
+            ApplySessionHighlights(result);
 
             _lastMatchCount = result.Count;
             _lastMatchDuration = result.Duration;
@@ -251,6 +262,109 @@ namespace TypeRight.Addin.Controllers
             if (_session == null) return;
             _session.Ignore = ignore;
             RecomputeMatches();
+        }
+
+        /// <summary>文本同类（字义匹配，2026-11 出卷场景）：
+        /// 选中文字或光标点入一个词 → 全文所有出现处成为命中单元（不看格式）→
+        /// 浮条批量改格式（如着重号）。默认排除否定前缀（不/非/未），公式区内不匹配。</summary>
+        public void TextSimilarSelect()
+        {
+            try
+            {
+                Document doc = ActiveDocument();
+                if (doc == null) { ShowToast("请先打开一个文档"); return; }
+
+                string pattern = GetTextPattern();
+                if (string.IsNullOrEmpty(pattern))
+                {
+                    ShowToast("光标处没有词：请选中一段文字（如「正确」）再点，或把光标点进词内");
+                    return;
+                }
+
+                CloseSession(offerSave: false);
+                var units = TypeRight.Signature.TextMatcher.FindOccurrences(doc, pattern, true);
+                TypeRightAddin.Log("TextSimilar: pattern=" + pattern + " units=" + units.Count);
+                if (units.Count == 0) { ShowToast("全文没有找到「" + pattern + "」"); return; }
+
+                _session = new SelectSession
+                {
+                    Doc = doc,
+                    DocFullName = SafeFullName(doc),
+                    SampleParagraph = units[0].Paragraph,
+                    TextMode = true,
+                    TextPattern = pattern,
+                    TextExcludeNegation = true,
+                    MatchedUnits = units,
+                    Highlights = new SimilarSelector.HighlightSession(doc)
+                };
+                ApplySessionHighlights(new UnitMatchResult { Units = _session.MatchedUnits });
+                _lastMatchCount = units.Count;
+                _lastMatchDuration = TimeSpan.FromMilliseconds(0);
+                _saveOffered = false;
+                ShowFloatBar(units[0].Paragraph);
+                _floatBar.SetTextMode(pattern, units.Count, true);
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("TextSimilarSelect: " + ex);
+            }
+        }
+
+        /// <summary>采样文本模式：优先选区文本；否则光标处向两侧扩展连续词字符（CJK/字母/数字）。</summary>
+        private string GetTextPattern()
+        {
+            Selection sel = App.Selection;
+            if (sel == null) return null;
+            try
+            {
+                string selText = (sel.Text ?? "").Replace("\r", "").Replace("\a", "").Trim();
+                if (selText.Length >= 2 && selText.Length <= 32) return selText;
+                if (selText.Length > 32) return selText.Substring(0, 32);
+            }
+            catch { }
+            try
+            {
+                Range r = sel.Range;
+                Paragraph p = r.Paragraphs[1];
+                Range pr = p.Range;
+                int pStart = pr.Start;
+                string text = (pr.Text ?? "").TrimEnd('\r');
+                int caret = Math.Max(0, Math.Min(text.Length, r.Start - pStart));
+                if (caret >= text.Length) return null;
+                int a = caret, b = caret + 1;
+                while (a > 0 && IsWordChar(text[a - 1])) a--;
+                while (b < text.Length && IsWordChar(text[b])) b++;
+                if (b - a < 1 || b - a > 32) return b - a <= 32 ? text.Substring(a, b - a) : null;
+                return text.Substring(a, b - a);
+            }
+            catch { return null; }
+        }
+
+        private static bool IsWordChar(char c)
+        {
+            return char.IsLetterOrDigit(c) && !char.IsPunctuation(c);
+        }
+
+        /// <summary>文本模式：切换"排除否定前缀"后实时重算（格式匹配的忽略维度开关在文本模式无意义）。</summary>
+        public void SetTextExcludeNegation(bool exclude)
+        {
+            if (_session == null || !_session.TextMode) return;
+            _session.TextExcludeNegation = exclude;
+            RecomputeTextMatches();
+        }
+
+        private void RecomputeTextMatches()
+        {
+            try
+            {
+                var units = TypeRight.Signature.TextMatcher.FindOccurrences(_session.Doc, _session.TextPattern, _session.TextExcludeNegation);
+                _session.MatchedUnits = units;
+                ApplySessionHighlights(new UnitMatchResult { Units = _session.MatchedUnits });
+                _lastMatchCount = units.Count;
+                _floatBar.UpdateMatched(units.Count, TimeSpan.FromMilliseconds(0), false);
+                if (_floatBar != null) _floatBar.SetTextMode(_session.TextPattern, units.Count, _session.TextExcludeNegation);
+            }
+            catch (Exception ex) { TypeRightAddin.Log("RecomputeTextMatches: " + ex); }
         }
 
         /// <summary>把下一处命中设为 Word 真选区（循环跳转）——最接近"真选中"的桥：

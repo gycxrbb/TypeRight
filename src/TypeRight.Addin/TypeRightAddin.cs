@@ -303,6 +303,11 @@ namespace TypeRight.Addin
             Controller.ConvertFormulas();
         }
 
+        public void OnTextSimilar(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.TextSimilarSelect();
+        }
+
         public void OnProfiles(NetOffice.OfficeApi.IRibbonControl control)
         {
             Controller.OpenProfiles();
@@ -360,6 +365,12 @@ namespace TypeRight.Addin
         public void AutomationJumpNext()
         {
             QueueOnWordUiThread(() => Controller.JumpToNextMatch());
+        }
+
+        /// <summary>自动化专用：文本同类选择。</summary>
+        public void AutomationTextSimilarSelect()
+        {
+            QueueOnWordUiThread(Controller.TextSimilarSelect);
         }
 
         /// <summary>自动化专用：公式转换全流程（进度窗/取消链取证）。</summary>

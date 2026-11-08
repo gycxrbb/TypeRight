@@ -19,6 +19,8 @@ namespace TypeRight.Signature
         public bool? Underline;
         /// <summary>删除线。</summary>
         public bool? StrikeThrough;
+        /// <summary>着重号（字下实心圆点，WdEmphasisMark.wdEmphasisMarkUnderSolidCircle）：true=加，false=除。</summary>
+        public bool? EmphasisMark;
         public int? ColorRgb;
 
         public bool HasAny
@@ -26,7 +28,7 @@ namespace TypeRight.Signature
             get
             {
                 return EastAsiaFont != null || LatinFont != null || SizePt.HasValue || Bold.HasValue
-                    || Italic.HasValue || Underline.HasValue || StrikeThrough.HasValue || ColorRgb.HasValue;
+                    || Italic.HasValue || Underline.HasValue || StrikeThrough.HasValue || EmphasisMark.HasValue || ColorRgb.HasValue;
             }
         }
     }
@@ -152,6 +154,10 @@ namespace TypeRight.Signature
                         c.Underline.Value ? WdUnderline.wdUnderlineSingle : WdUnderline.wdUnderlineNone, (a, b) => a == b);
                 if (c.StrikeThrough.HasValue)
                     WordFormatUtils.SetIfChanged(() => f.StrikeThrough, v => f.StrikeThrough = v, c.StrikeThrough.Value ? -1 : 0, WordFormatUtils.IntEq);
+                    if (c.EmphasisMark.HasValue)
+                        WordFormatUtils.SetIfChanged(() => f.EmphasisMark, v => f.EmphasisMark = v,
+                            c.EmphasisMark.Value ? WdEmphasisMark.wdEmphasisMarkUnderSolidCircle : WdEmphasisMark.wdEmphasisMarkNone,
+                            (a, b) => (int)a == (int)b);
                 if (c.ColorRgb.HasValue)
                     WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
                         (WdColor)WordFormatUtils.RgbToWdColor(c.ColorRgb.Value), (a, b) => a == b);
@@ -379,6 +385,10 @@ namespace TypeRight.Signature
                     c.Underline.Value ? WdUnderline.wdUnderlineSingle : WdUnderline.wdUnderlineNone, (a, b) => a == b);
             if (c.StrikeThrough.HasValue)
                 changed |= WordFormatUtils.SetIfChanged(() => f.StrikeThrough, v => f.StrikeThrough = v, c.StrikeThrough.Value ? -1 : 0, WordFormatUtils.IntEq);
+                if (c.EmphasisMark.HasValue)
+                    changed |= WordFormatUtils.SetIfChanged(() => f.EmphasisMark, v => f.EmphasisMark = v,
+                        c.EmphasisMark.Value ? WdEmphasisMark.wdEmphasisMarkUnderSolidCircle : WdEmphasisMark.wdEmphasisMarkNone,
+                        (a, b) => (int)a == (int)b);
             if (c.ColorRgb.HasValue)
                 changed |= WordFormatUtils.SetIfChanged(() => f.Color, v => f.Color = v,
                     (WdColor)WordFormatUtils.RgbToWdColor(c.ColorRgb.Value), (a, b) => a == b);

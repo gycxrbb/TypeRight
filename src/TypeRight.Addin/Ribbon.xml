@@ -9,6 +9,11 @@
                   supertip="光标点进一个段落后点击：全文档同款格式的段落一起选中，&#10;在浮动条上选字体即可批量修改。&#10;右键菜单里也有同名命令。"
                   getImage="OnGetImage"
                   onAction="OnSimilar" />
+          <button id="btnTextSimilar" size="large" label="文本同类"
+                  screentip="全文找同一文本的所有出现处"
+                  supertip="选中或光标点入一个词（如「正确」），全文所有出现处高亮选中，&#10;浮条上批量改格式（如加着重号）。"
+                  getImage="OnGetImage"
+                  onAction="OnTextSimilar" />
           <button id="btnFormulas" size="large" label="公式转换"
                   screentip="全文纯文本公式 → Word 公式对象"
                   supertip="ax²+bx+c=0 这类文本公式批量转为可编辑公式对象，&#10;失败片段原样保留。"
@@ -43,6 +48,9 @@
   <contextMenus>
     <contextMenu idMso="ContextMenuText">
       <button id="ctxSimilar" label="同类选择" onAction="OnSimilar"
+              insertBeforeMso="Cut" getImage="OnGetImage" />
+      <button id="ctxTextSimilar" label="文本同类" onAction="OnTextSimilar"
+              insertBeforeMso="Cut" getImage="OnGetImage"
               insertBeforeMso="Cut" getImage="OnGetImage" />
     </contextMenu>
   </contextMenus>

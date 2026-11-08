@@ -646,6 +646,52 @@ namespace TypeRight.Addin.UI
         [DllImport("user32.dll")]
         private static extern IntPtr GetActiveWindow();
 
+        private void OnEmphasisMarkToggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _controller.ApplyChanges(new FormatChanges { EmphasisMark = BtnEmphasisMark.IsChecked == true });
+        }
+
+        private void OnNoNegToggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            _controller.SetTextExcludeNegation(ChkNoNeg.IsChecked == true);
+        }
+
+        /// <summary>文本同类模式：切匹配行（格式条件 → 文本+否定前缀），浮条上无格式签名可显示。</summary>
+        public void SetTextMode(string pattern, int count, bool excludeNegation)
+        {
+            _suppressEvents = true;
+            try
+            {
+                ChkStrict.Visibility = Visibility.Collapsed;
+                ChkIgnoreSize.Visibility = Visibility.Collapsed;
+                ChkIgnoreColor.Visibility = Visibility.Collapsed;
+                ChkIgnoreBold.Visibility = Visibility.Collapsed;
+                TxtPattern.Visibility = Visibility.Visible;
+                TxtPattern.Text = string.Format("「{0}」× {1}", pattern, count);
+                ChkNoNeg.Visibility = Visibility.Visible;
+                ChkNoNeg.IsChecked = excludeNegation;
+            }
+            finally { _suppressEvents = false; }
+        }
+
+        /// <summary>恢复格式模式匹配行（每次 ShowBar 时调用；文本模式在 SetTextMode 再切换）。</summary>
+        public void ResetToFormatMode()
+        {
+            _suppressEvents = true;
+            try
+            {
+                ChkStrict.Visibility = Visibility.Visible;
+                ChkIgnoreSize.Visibility = Visibility.Visible;
+                ChkIgnoreColor.Visibility = Visibility.Visible;
+                ChkIgnoreBold.Visibility = Visibility.Visible;
+                TxtPattern.Visibility = Visibility.Collapsed;
+                ChkNoNeg.Visibility = Visibility.Collapsed;
+            }
+            finally { _suppressEvents = false; }
+        }
+
         private void OnJumpNext(object sender, RoutedEventArgs e)
         {
             int idx = _controller.JumpToNextMatch();
