@@ -14,6 +14,8 @@ namespace TypeRight.Formatting
     {
         public int Converted;
         public int Failed;
+        /// <summary>本次是否被用户取消（Esc）。已注入的部分保持有效，整程在一个撤销记录内。</summary>
+        public bool Cancelled;
         /// <summary>整程耗时（毫秒）——性能回归观测用。</summary>
         public long ElapsedMs;
         /// <summary>分段耗时分解（片段扫描/预备/草稿/复制/表格rPr）。</summary>
@@ -22,7 +24,7 @@ namespace TypeRight.Formatting
 
         public string SummaryText()
         {
-            return "已转换 " + Converted + " 处，失败 " + Failed + " 处" + (Failed > 0 ? "（失败片段已原样保留）" : "")
+            return (Cancelled ? "已取消：已转换 " : "已转换 ") + Converted + " 处，失败 " + Failed + " 处" + (Failed > 0 ? "（失败片段已原样保留）" : "")
                 + (ElapsedMs > 0 ? "，" + (ElapsedMs / 1000.0).ToString("0.0") + "s" : "");
         }
     }
@@ -95,12 +97,40 @@ namespace TypeRight.Formatting
         ///    （降序=每次插入只影响已处理完的更后位置，未处理目标位置稳定）；
         /// ③ 终检+回退：文档级公式区计数 O(1) 判定整批成败，不符才逐项定位、逐项回退单发路径。
         /// 公式构建会重写单元格 run 的 rPr：表格内本轮确有转换的段落最后统一强制显式回写（TC-20）。</summary>
+        /// <summary>进度回调（阶段文案, 已完成, 总量≤0=不确定）。UI 侧注入，Core 无 UI 依赖。</summary>
+        public Action<string, int, int> Progress;
+
+        /// <summary>取消询问（返回 true = 用户请求取消）。检查点抛 OperationCanceledException，
+        /// 已完成部分保持有效，整程仍包在同一撤销记录内。</summary>
+        public Func<bool> CancelPending;
+
+        private void ReportProgress(string phase, int done, int total)
+        {
+            var p = Progress;
+            if (p != null) { try { p(phase, done, total); } catch { } }
+        }
+
+        private bool IsCancelRequested()
+        {
+            var f = CancelPending;
+            try { return f != null && f(); } catch { return false; }
+        }
+
+        private void CheckCancel()
+        {
+            if (IsCancelRequested()) throw new OperationCanceledException("用户取消");
+        }
+
         public FormulaStats ConvertDocument()
         {
             var stats = new FormulaStats();
             var watch = System.Diagnostics.Stopwatch.StartNew();
             ResetTimers();
             bool hasMml = !string.IsNullOrEmpty(_mml2OmmlPath);
+            bool[] ok = null;   // 提升作用域：正常/取消两条路径共用尾部统计
+
+            try
+            {
 
             // ── 阶段 1：全文规划（纯读，无编辑） ──
             int zonesBefore = 0;
@@ -111,8 +141,12 @@ namespace TypeRight.Formatting
             List<int[]> zones = TypeRight.Signature.SimilarSelector.MathZoneRanges(_doc);   // null=无公式区
             try
             {
-                foreach (Paragraph p in WordCompat.ParagraphsOf(_doc))
+                var allParas = WordCompat.ParagraphsOf(_doc);
+                int pn = 0;
+                foreach (Paragraph p in allParas)
                 {
+                    pn++;
+                    if ((pn & 31) == 0) { ReportProgress("正在定位公式…", pn, allParas.Count); CheckCancel(); }
                     try
                     {
                         Range pr = p.Range;
@@ -139,10 +173,11 @@ namespace TypeRight.Formatting
                     catch { }
                 }
             }
+            catch (OperationCanceledException) { throw; }
             catch { }
             MsPlan += Td(t1);
 
-            var ok = new bool[plan.Count];
+            ok = new bool[plan.Count];
 
             // ── 阶段 2：一次装载 + 降序批量注入 ──
             Document scratch = null;
@@ -173,9 +208,14 @@ namespace TypeRight.Formatting
                             targets[j] = plan[injectIdx[j]].Target;
                             mmls[j] = plan[injectIdx[j]].Mml;
                         }
-                        bool[] okBatch = MathmlInjector.InjectAll(_doc, targets, mmls, _mml2OmmlPath, scratch);
+                        ReportProgress("正在转换公式…", 0, injectIdx.Count);
+                        bool injectCancelled = false;
+                        bool[] okBatch = MathmlInjector.InjectAll(_doc, targets, mmls, _mml2OmmlPath, scratch,
+                            (d, t) => ReportProgress("正在转换公式…", d, t),
+                            () => { if (IsCancelRequested()) { injectCancelled = true; return true; } return false; });
                         for (int j = 0; j < injectIdx.Count; j++)
-                            ok[injectIdx[j]] = okBatch[j];
+                            ok[injectIdx[j]] = okBatch[j];   // 取消时 okBatch 为部分结果：已注入项照常计入统计
+                        if (injectCancelled) throw new OperationCanceledException("用户取消");
                     }
                 }
 
@@ -201,9 +241,13 @@ namespace TypeRight.Formatting
                 MsVerify += Td(tv);
 
                 // ── 阶段 3b：逐项回退（未注入/注入失败；降序保位置稳定） ──
+                int failTotal = 0, fn = 0;
+                for (int i = 0; i < plan.Count; i++) if (!ok[i]) failTotal++;
                 for (int i = plan.Count - 1; i >= 0; i--)
                 {
                     if (ok[i]) continue;
+                    fn++;
+                    if ((fn & 7) == 0) { ReportProgress("正在收尾处理…", fn, failTotal); CheckCancel(); }
                     var s = plan[i];
                     long tf = Ts();
                     long scratchBefore = MathmlInjector.MsScratch, copyBefore = MathmlInjector.MsCopy;
@@ -243,9 +287,14 @@ namespace TypeRight.Formatting
             {
                 if (scratch != null) { try { scratch.Close(false); } catch { } }
             }
+            }
+            catch (OperationCanceledException)
+            {
+                stats.Cancelled = true;   // 已注入部分有效；整程在同一撤销记录，Ctrl+Z 可整体回退
+            }
 
             int converted = 0;
-            foreach (bool b in ok) if (b) converted++;
+            if (ok != null) foreach (bool b in ok) if (b) converted++;
             stats.Converted = converted;
             watch.Stop();
             stats.ElapsedMs = watch.ElapsedMilliseconds;

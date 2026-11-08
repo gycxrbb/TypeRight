@@ -23,7 +23,8 @@ namespace TypeRight.Formulas
         /// 降序逐个 FormattedText 赋值（降序保证未处理目标位置不漂移）。
         /// 返回逐项赋值成败；**不做逐项公式区校验**（254 处 × 2 次 COM 读是纯开销）——
         /// 静默失败由调用方以文档级公式区计数终检兜底（O(1)），计数不符才逐项定位。</summary>
-        public static bool[] InjectAll(Document doc, Range[] targets, string[] mathmls, string xslPath, Document scratch)
+        public static bool[] InjectAll(Document doc, Range[] targets, string[] mathmls, string xslPath, Document scratch,
+            Action<int, int> progress = null, Func<bool> cancelPending = null)
         {
             int n = targets.Length;
             var ok = new bool[n];
@@ -65,9 +66,16 @@ namespace TypeRight.Formulas
                 }
                 if (paras.Count < n) return ok;
 
-                // 4) 降序逐个复制（目标位置稳定）
+                // 4) 降序逐个复制（目标位置稳定）；每 16 个查一次取消（Esc），逐项报进度
                 for (int i = n - 1; i >= 0; i--)
                 {
+                    if (((n - i) & 15) == 0)
+                    {
+                        bool cancel = false;
+                        try { cancel = cancelPending != null && cancelPending(); } catch { }
+                        if (cancel) return ok;   // 部分结果带回：已注入项的 ok 标记对调用方有效
+                    }
+                    if (progress != null) { try { progress(n - i, n); } catch { } }
                     try
                     {
                         long t1 = Now();
@@ -81,6 +89,7 @@ namespace TypeRight.Formulas
                 }
                 return ok;
             }
+            catch (OperationCanceledException) { throw; }
             catch
             {
                 return ok;

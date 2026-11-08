@@ -362,6 +362,12 @@ namespace TypeRight.Addin
             QueueOnWordUiThread(() => Controller.JumpToNextMatch());
         }
 
+        /// <summary>自动化专用：公式转换全流程（进度窗/取消链取证）。</summary>
+        public void AutomationConvertFormulas()
+        {
+            QueueOnWordUiThread(Controller.ConvertFormulas);
+        }
+
         /// <summary>自动化专用：直接 Invalidate 功能区（图标重取链取证）。</summary>
         public void AutomationRefreshRibbon()
         {

@@ -59,6 +59,31 @@ namespace TypeRight.Addin.Controllers
         /// <summary>当前会话命中数（浮条跳转进度显示用）。</summary>
         public int GetMatchedCount() { return _lastMatchCount; }
 
+        /// <summary>Esc 是否处于按下态（GetAsyncKeyState 读硬件状态，与焦点无关；
+        /// 转换在 Word UI 线程上跑、无消息循环，这是唯一可靠的取消信号）。</summary>
+        private bool IsEscapePressed()
+        {
+            try { return (GetAsyncKeyState(0x1B) & 0x8000) != 0; }
+            catch { return false; }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        /// <summary>公式转换完成主文案（人话）。</summary>
+        private static string FormulaDoneMainText(FormulaStats s)
+        {
+            if (s.Cancelled) return "已取消 · 本次已转换 " + s.Converted + " 处（Ctrl+Z 可整体撤销）";
+            if (s.Converted == 0 && s.Failed == 0) return "没有找到可转换的文本公式";
+            return "✓ 已转换 " + s.Converted + " 处公式" + (s.ElapsedMs > 0 ? " · " + (s.ElapsedMs / 1000.0).ToString("0.0") + " 秒" : "");
+        }
+
+        private static string FormulaDoneSubText(FormulaStats s)
+        {
+            if (s.Failed > 0) return s.Failed + " 处无法解析，已保留原文本（多为括号不配对）";
+            return s.Cancelled ? "" : "Esc 关闭浮动条可见完整统计";
+        }
+
         /// <summary>设置跳转强调色（十六进制 RRGGBB）；持久化，会话进行中立即重涂当前处。</summary>
         public void SetEmphasisColor(string hex)
         {
@@ -382,13 +407,23 @@ namespace TypeRight.Addin.Controllers
                 }
                 CloseSession(offerSave: false);
 
+                // 三层反馈（2026-11 体验优化）：A 即刻层——等待光标 + 状态栏（Word 原生长任务语言）
+                var progress = new UI.ConvertProgressWindow();
+                progress.ShowAt(App);
+                try { App.System.Cursor = WdCursorType.wdCursorWait; } catch { }
+                try { App.StatusBar = "TypeRight：正在转换公式…（按 Esc 取消）"; } catch { }
+
                 bool screenOff = false;
                 try { App.ScreenUpdating = false; screenOff = true; } catch { }
                 var undo = WordCompat.BeginUndo(App, "公式转换");
                 FormulaStats stats;
                 try
                 {
-                    var converter = new FormulaConverter(doc, null, FormulaConverter.ResolveMml2OmmlPath(App));
+                    var converter = new FormulaConverter(doc, null, FormulaConverter.ResolveMml2OmmlPath(App))
+                    {
+                        Progress = (phase, done, total) => progress.Update(phase, done, total),
+                        CancelPending = IsEscapePressed
+                    };
                     stats = converter.ConvertDocument();
                 }
                 finally
@@ -397,7 +432,10 @@ namespace TypeRight.Addin.Controllers
                     if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
                 }
 
-                ShowToast(stats.SummaryText());
+                // 还原光标/状态栏；C 完成层：进度窗就地变完成态（视线内，替代右下角 toast）
+                try { App.System.Cursor = WdCursorType.wdCursorNormal; } catch { }
+                try { App.StatusBar = ""; } catch { }
+                progress.ShowDone(FormulaDoneMainText(stats), FormulaDoneSubText(stats));
                 if (stats.Failed > 0)
                 {
                     if (_failuresWindow == null) _failuresWindow = new FormulaFailuresWindow();
