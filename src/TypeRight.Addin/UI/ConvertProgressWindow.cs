@@ -111,7 +111,8 @@ namespace TypeRight.Addin.UI
             _timer.Tick += (s, e) => { _timer.Stop(); FadeOut(); };
         }
 
-        /// <summary>显示在 Word 窗口右下（状态栏上方）。</summary>
+        /// <summary>显示在 Word 当前视口居中（水平正中、垂直约 45%——避开功能区与状态栏，
+        /// 转换期间用户视线正落在文档中央，进度反馈在视线内而非角落）。</summary>
         public void ShowAt(WdApplication app)
         {
             try
@@ -121,10 +122,11 @@ namespace TypeRight.Addin.UI
                 if (GetWindowRect(hwnd, out r))
                 {
                     double dpi = DpiScale(hwnd);
-                    Left = r.Right / dpi - (CardWidth + 24) - 28;
-                    Top = r.Bottom / dpi - 210;
-                    if (Left < 0) Left = 40;
-                    if (Top < 0) Top = 80;
+                    double winW = (r.Right - r.Left) / dpi, winH = (r.Bottom - r.Top) / dpi;
+                    Left = r.Left / dpi + (winW - (CardWidth + 24)) / 2;
+                    Top = r.Top / dpi + winH * 0.45 - ActualHeight / 2;
+                    if (Left < r.Left / dpi + 10) Left = r.Left / dpi + 10;
+                    if (Top < r.Top / dpi + 80) Top = r.Top / dpi + 80;
                 }
                 else PositionFallback();
             }
@@ -137,8 +139,8 @@ namespace TypeRight.Addin.UI
         private void PositionFallback()
         {
             var area = SystemParameters.WorkArea;
-            Left = area.Right - Width - 40;
-            Top = area.Bottom - 210;
+            Left = area.Left + (area.Width - (CardWidth + 24)) / 2;
+            Top = area.Top + area.Height * 0.42;
         }
 
         /// <summary>过程态更新（在 Word UI 线程被转换占用时调用：同步赋值 + 强制布局，
