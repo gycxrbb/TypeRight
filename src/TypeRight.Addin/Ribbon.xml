@@ -50,7 +50,6 @@
       <button id="ctxSimilar" label="同类选择" onAction="OnSimilar"
               insertBeforeMso="Cut" getImage="OnGetImage" />
       <button id="ctxTextSimilar" label="文本同类" onAction="OnTextSimilar"
-              insertBeforeMso="Cut" getImage="OnGetImage"
               insertBeforeMso="Cut" getImage="OnGetImage" />
     </contextMenu>
   </contextMenus>
