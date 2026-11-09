@@ -6,6 +6,7 @@ using NetOffice.WordApi;
 using NetOffice.WordApi.Enums;
 using TypeRight.Addin.UI;
 using TypeRight.Formatting;
+using TypeRight.Forms;
 using TypeRight.Profiles;
 using TypeRight.Signature;
 
@@ -98,6 +99,13 @@ namespace TypeRight.Addin.Controllers
                 if (_session != null) _session.Highlights.ReapplyCurrent(_settings.EmphasisColorRgb);
             }
             catch (Exception ex) { TypeRightAddin.Log("SetEmphasisColor: " + ex.Message); }
+        }
+
+        /// <summary>保存设置（浮条"其他颜色"自定义色等轻量持久化入口）。</summary>
+        public void SaveSettings()
+        {
+            try { SettingsStore.Save(_settings); }
+            catch (Exception ex) { TypeRightAddin.Log("SaveSettings: " + ex.Message); }
         }
         private TimeSpan _lastMatchDuration = TimeSpan.Zero;
         private string _opsDocFullName;

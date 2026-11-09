@@ -50,3 +50,10 @@
 - 黄色 HighlightColorIndex 写入命中区间（**排除段落/单元格标记**——跨结束标记设置会扩散到整段）
 - 包在一个 UndoRecord（"TypeRight 匹配标记"）内，Ctrl+Z 一次还原
 - 会话关闭（Esc / 点击非命中段 / 文档关闭）时自动清除全部高亮
+
+## 字体颜色板（浮条「A」按钮）
+
+- **常用色** 6 色（柔和低饱和：黑/深蓝/中蓝/深红/深绿/灰）+ **标准色** 10 色（与 Word「字体颜色」标准色一致）
+- **其他颜色…** 调系统取色器（ColorDialog，FullOpen 直接展开自定义区）；模态属主为宿主窗口
+- 取色器自定义色板跨会话持久化（`settings.json → CustomFontColors`），确定/取消均记住
+- 选中后走 `ApplyChanges(ColorRgb)`，与色板点选同一幂等写入链路

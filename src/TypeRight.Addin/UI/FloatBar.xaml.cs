@@ -36,6 +36,7 @@ namespace TypeRight.Addin.UI
         private Popup _colorPopup;
         private Popup _sizePopup;
         private OfficeThemeKind _themeKind;
+        private int? _fontColorRgb;   // 当前字体色 0xRRGGBB（null=本次会话未设置，取色器回退黑）
 
         public FloatBar(TypeRightController controller)
         {
@@ -356,6 +357,7 @@ namespace TypeRight.Addin.UI
                 ChkIgnoreColor.IsEnabled = false;
                 ChkIgnoreBold.IsEnabled = false;
                 SetColorStrip(null);
+                _fontColorRgb = null;
             }
             finally { _suppressEvents = false; }
         }
@@ -542,19 +544,67 @@ namespace TypeRight.Addin.UI
 
         private void OnColorClick(object sender, RoutedEventArgs e)
         {
+            // 常用色：柔和低饱和（讲义/试卷排版语义色）
             var presets = new[]
             {
                 new object[] { "黑色", "#000000" }, new object[] { "深蓝", "#1A365D" },
                 new object[] { "中蓝", "#2B6CB0" }, new object[] { "深红", "#C0392B" },
                 new object[] { "深绿", "#2F855A" }, new object[] { "灰", "#595959" }
             };
+            // 标准色：与 Word"字体颜色"下拉的标准色一致
+            var standards = new[]
+            {
+                new object[] { "深红", "#C00000" }, new object[] { "红色", "#FF0000" },
+                new object[] { "橙色", "#FFC000" }, new object[] { "黄色", "#FFFF00" },
+                new object[] { "浅绿", "#92D050" }, new object[] { "绿色", "#00B050" },
+                new object[] { "浅蓝", "#00B0F0" }, new object[] { "蓝色", "#0070C0" },
+                new object[] { "深蓝", "#002060" }, new object[] { "紫色", "#7030A0" }
+            };
 
             // 调色板（主题化：面板底色/描边/悬停环）
             Brush popupBg = BrushOf("PopupBgBrush"), popupBorder = BrushOf("PopupBorderBrush"),
                  accent = BrushOf("AccentBrush"), panelBorder = BrushOf("PanelBorderBrush");
+            var labelBrush = BrushOf("TextSecondaryBrush");
+            var hoverBrush = BrushOf("ItemHoverBrush");
+            var textBrush = BrushOf("TextBrush");
+            var sepBrush = BrushOf("SeparatorBrush");
 
+            var panel = new StackPanel();
+            panel.Children.Add(MakePaletteLabel("常用色", labelBrush, topMargin: 0));
+            panel.Children.Add(MakeSwatchRow(presets, accent, panelBorder));
+            panel.Children.Add(MakePaletteLabel("标准色", labelBrush, topMargin: 3));
+            panel.Children.Add(MakeSwatchRow(standards, accent, panelBorder));
+            panel.Children.Add(new Separator { Background = sepBrush, Height = 1, Margin = new Thickness(2, 7, 2, 5) });
+            panel.Children.Add(MakeMoreColorsButton(hoverBrush, textBrush));
+
+            _colorPopup = new Popup
+            {
+                Child = new Border
+                {
+                    Background = popupBg, CornerRadius = new CornerRadius(6),
+                    BorderBrush = popupBorder,
+                    BorderThickness = new Thickness(1), Padding = new Thickness(6),
+                    Child = panel
+                },
+                PlacementTarget = BtnColor, Placement = PlacementMode.Bottom,
+                StaysOpen = false, AllowsTransparency = true
+            };
+            _colorPopup.IsOpen = true;
+        }
+
+        private static TextBlock MakePaletteLabel(string text, Brush brush, int topMargin)
+        {
+            return new TextBlock
+            {
+                Text = text, FontSize = 11, Foreground = brush,
+                Margin = new Thickness(4, topMargin, 0, 2)
+            };
+        }
+
+        private StackPanel MakeSwatchRow(object[][] colors, Brush accent, Brush panelBorder)
+        {
             var row = new StackPanel { Orientation = Orientation.Horizontal };
-            foreach (var p in presets)
+            foreach (var p in colors)
             {
                 var swatch = new Border
                 {
@@ -568,20 +618,80 @@ namespace TypeRight.Addin.UI
                 swatch.MouseLeftButtonUp += OnPickColor;
                 row.Children.Add(swatch);
             }
+            return row;
+        }
 
-            _colorPopup = new Popup
+        /// <summary>"其他颜色…"入口（Word 同款）：四分色图标 + 文本，整行可点。</summary>
+        private Border MakeMoreColorsButton(Brush hoverBrush, Brush textBrush)
+        {
+            var icon = new UniformGrid { Rows = 2, Columns = 2, Width = 13, Height = 13, VerticalAlignment = VerticalAlignment.Center };
+            foreach (string hex in new[] { "#E81123", "#FFB900", "#0078D4", "#107C10" })
+                icon.Children.Add(new Border { Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)) });
+
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(icon);
+            content.Children.Add(new TextBlock
             {
-                Child = new Border
-                {
-                    Background = popupBg, CornerRadius = new CornerRadius(6),
-                    BorderBrush = popupBorder,
-                    BorderThickness = new Thickness(1), Padding = new Thickness(5),
-                    Child = row
-                },
-                PlacementTarget = BtnColor, Placement = PlacementMode.Bottom,
-                StaysOpen = false, AllowsTransparency = true
+                Text = "其他颜色…", FontSize = 12, Foreground = textBrush,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(7, 0, 0, 0)
+            });
+
+            var btn = new Border
+            {
+                Background = Brushes.Transparent, CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(5, 5, 8, 5), Margin = new Thickness(1, 0, 1, 1),
+                Cursor = Cursors.Hand, Child = content
             };
-            _colorPopup.IsOpen = true;
+            btn.MouseEnter += (s, _) => btn.Background = hoverBrush;
+            btn.MouseLeave += (s, _) => btn.Background = Brushes.Transparent;
+            btn.MouseLeftButtonUp += OnMoreColors;
+            return btn;
+        }
+
+        private void OnMoreColors(object sender, MouseButtonEventArgs e)
+        {
+            if (_colorPopup != null) _colorPopup.IsOpen = false;
+            try
+            {
+                int cur = _fontColorRgb ?? 0;
+                using (var dlg = new System.Windows.Forms.ColorDialog
+                {
+                    FullOpen = true,   // 与 Word"其他颜色"一致：直接展开含自定义色的完整对话框
+                    Color = System.Drawing.Color.FromArgb((cur >> 16) & 0xFF, (cur >> 8) & 0xFF, cur & 0xFF),
+                    CustomColors = _controller.Settings.CustomFontColors
+                })
+                {
+                    IntPtr owner = IntPtr.Zero;
+                    try { owner = WordWindow.Get(_controller.App); } catch { }
+                    var result = dlg.ShowDialog(owner == IntPtr.Zero ? null : new Win32Window(owner));
+
+                    // 自定义色无论确定/取消都记住（Word 同款行为），跨会话持久化
+                    try
+                    {
+                        if (dlg.CustomColors != null && dlg.CustomColors.Length > 0)
+                        {
+                            _controller.Settings.CustomFontColors = dlg.CustomColors;
+                            _controller.SaveSettings();
+                        }
+                    }
+                    catch { }
+
+                    if (result != System.Windows.Forms.DialogResult.OK) return;
+                    int rgb = (dlg.Color.R << 16) | (dlg.Color.G << 8) | dlg.Color.B;
+                    _fontColorRgb = rgb;
+                    SetColorStrip(rgb);
+                    _controller.ApplyChanges(new FormatChanges { ColorRgb = rgb });
+                }
+            }
+            catch (Exception ex) { TypeRightAddin.Log("MoreColors: " + ex.Message); }
+        }
+
+        /// <summary>把宿主窗口句柄包成 WinForms 模态属主（系统取色器要压在宿主窗口之上）。</summary>
+        private sealed class Win32Window : System.Windows.Forms.IWin32Window
+        {
+            private readonly IntPtr _handle;
+            public Win32Window(IntPtr handle) { _handle = handle; }
+            public IntPtr Handle { get { return _handle; } }
         }
 
         private void OnPickColor(object sender, MouseButtonEventArgs e)
@@ -590,6 +700,7 @@ namespace TypeRight.Addin.UI
             if (_colorPopup != null) _colorPopup.IsOpen = false;
             string hex = (string)border.Tag ?? ColorToHex(border.Background as SolidColorBrush);
             int rgb = int.Parse(hex.Substring(1), System.Globalization.NumberStyles.HexNumber);
+            _fontColorRgb = rgb;
             SetColorStrip(rgb);
             _controller.ApplyChanges(new FormatChanges { ColorRgb = rgb });
         }

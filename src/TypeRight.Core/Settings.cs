@@ -22,6 +22,9 @@ namespace TypeRight
         /// <summary>跳转强调色（十六进制 RRGGBB）。柔和低饱和系，与命中黄色基底协调。</summary>
         public string EmphasisColor { get; set; } = "#E8B34B";
 
+        /// <summary>字体颜色取色器的自定义色板（COLORREF 整数，与系统颜色对话框原样存取）。</summary>
+        public int[] CustomFontColors { get; set; } = new int[0];
+
         /// <summary>强调色 → Word WdColor 的 BGR 整数（R + G*256 + B*65536）。解析失败回退默认蜜橙。</summary>
         public int EmphasisColorRgb
         {
