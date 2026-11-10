@@ -83,6 +83,62 @@ namespace TypeRight
             return list;
         }
 
+        /// <summary>单元格集合兼容枚举（规避纵向合并单元格时 Columns.Cells 抛 5991 及 WPS FactoryException）。</summary>
+        public static List<Cell> CellsOf(Cells cells)
+        {
+            var list = new List<Cell>();
+            if (cells == null) return list;
+            try
+            {
+                foreach (object item in (System.Collections.IEnumerable)cells.UnderlyingObject)
+                    list.Add(new Cell(null, item));
+            }
+            catch { }
+            return list;
+        }
+
+        /// <summary>表格行集合兼容枚举。</summary>
+        public static List<Row> RowsOf(Rows rows)
+        {
+            var list = new List<Row>();
+            if (rows == null) return list;
+            try
+            {
+                foreach (object item in (System.Collections.IEnumerable)rows.UnderlyingObject)
+                    list.Add(new Row(null, item));
+            }
+            catch { }
+            return list;
+        }
+
+        /// <summary>浮动图形集合兼容枚举。</summary>
+        public static List<Shape> ShapesOf(Shapes shapes)
+        {
+            var list = new List<Shape>();
+            if (shapes == null) return list;
+            try
+            {
+                foreach (object item in (System.Collections.IEnumerable)shapes.UnderlyingObject)
+                    list.Add(new Shape(null, item));
+            }
+            catch { }
+            return list;
+        }
+
+        /// <summary>嵌入式图形集合兼容枚举。</summary>
+        public static List<InlineShape> InlineShapesOf(InlineShapes inlineShapes)
+        {
+            var list = new List<InlineShape>();
+            if (inlineShapes == null) return list;
+            try
+            {
+                foreach (object item in (System.Collections.IEnumerable)inlineShapes.UnderlyingObject)
+                    list.Add(new InlineShape(null, item));
+            }
+            catch { }
+            return list;
+        }
+
         /// <summary>公式集合兼容访问（MathZoneRanges 用）。
         /// 路径取舍（2026-11-07 实测 196 公式文档）：索引器 697ms vs IEnumVARIANT 枚举 3484ms——
         /// Word 的 OMaths 枚举器是病态慢路径（还拖慢公式区构建 ×2 次 = 用户实测 9s 的主因）；

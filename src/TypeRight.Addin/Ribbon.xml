@@ -20,6 +20,18 @@
                   getImage="OnGetImage"
                   onAction="OnFormulas" />
         </group>
+        <group id="grpForm" label="填表防崩">
+          <button id="btnPhotoFit" size="large" label="照片入格"
+                  screentip="证件照一键严丝合缝贴入照片格"
+                  supertip="支持三种方式：&#10;1. 复制照片后点击 → 自动识别照片格并严丝合缝贴入；&#10;2. 光标点进照片格后点击 → 选择本地图片文件贴入；&#10;3. 已粘贴进格子的图片 → 点击自动转悬浮并先等比缩放、再微调尺寸严丝合缝入格（四边不压表格线、画面零裁切）。"
+                  getImage="OnGetImage"
+                  onAction="OnPhotoFit" />
+          <button id="btnCellBox" size="large" label="悬浮填表框"
+                  screentip="在当前单元格或表头下划线处铺设 PPT 式透明填表框"
+                  supertip="效仿 PPT 文本框的零破坏填表方式：&#10;1. 光标在表格单元格内 → 生成几乎撑满该格的无边框透明文本框（保留格内原有文字与底部签字栏），打多少字都不会撑大格子；&#10;2. 光标在表头下划线处 → 在下划线上方铺设透明文本框，打字绝不顶歪右侧文字。"
+                  getImage="OnGetImage"
+                  onAction="OnCellBox" />
+        </group>
         <group id="grpProfile" label="方案">
           <menu id="mnuProfiles" size="large" label="方案"
                 screentip="存为方案 / 应用 / 管理"
@@ -50,6 +62,10 @@
       <button id="ctxSimilar" label="同类选择" onAction="OnSimilar"
               insertBeforeMso="Cut" getImage="OnGetImage" />
       <button id="ctxTextSimilar" label="文本同类" onAction="OnTextSimilar"
+              insertBeforeMso="Cut" getImage="OnGetImage" />
+      <button id="ctxPhotoFit" label="照片严丝合缝入格" onAction="OnPhotoFit"
+              insertBeforeMso="Cut" getImage="OnGetImage" />
+      <button id="ctxCellBox" label="在此格插入悬浮填表框" onAction="OnCellBox"
               insertBeforeMso="Cut" getImage="OnGetImage" />
     </contextMenu>
   </contextMenus>

@@ -61,6 +61,12 @@ namespace TypeRight.Addin.UI
             {
                 Text = "公式转换：一键把 ax²+bx+c=0 这类纯文本公式全文转为可编辑公式对象（TC 级失败片段原样保留）。",
                 FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(0x5B, 0x66, 0x73)),
+                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6), LineHeight = 18
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "填表防崩：「照片入格」一键将剪贴板或本地照片严丝合缝贴入表格照片格（四边不压线、完整保留画面）；「悬浮填表框」在当前单元格或表头下划线处铺设 PPT 式无边框透明文本框，打字绝不撑大表格或顶歪右侧文字。",
+                FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(0x5B, 0x66, 0x73)),
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12), LineHeight = 18
             });
 

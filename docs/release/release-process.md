@@ -5,9 +5,9 @@
 ```powershell
 # 1. 版本号已更新（TypeRight.Addin.csproj <Version>）
 # 2. 提交推送
-git add -A && git commit -m "v0.3.1" && git push origin main
+git add -A && git commit -m "v0.4.0" && git push origin main
 # 3. 打 tag（触发 GitHub Actions 自动构建+发 Release）
-git tag v0.3.1 && git push origin v0.3.1
+git tag v0.4.0 && git push origin v0.4.0
 # 4. 等 Actions 跑完（~5 分钟），产物自动挂 Release
 ```
 
@@ -17,7 +17,7 @@ git tag v0.3.1 && git push origin v0.3.1
 
 ```powershell
 powershell -File tools\package-release.ps1
-# 产物: dist\TypeRight-v0.3.1.zip
+# 产物: dist\TypeRight-v0.4.0.zip
 ```
 
 ## 安装包内容（18 个文件）
@@ -35,7 +35,7 @@ files\TypeRight.Addin.dll 等 10 个 DLL          ← 编译产物
 ## 发给朋友的直达链接
 
 ```
-https://github.com/gycxrbb/TypeRight/releases/download/v0.3.1/TypeRight-v0.3.1.zip
+https://github.com/gycxrbb/TypeRight/releases/download/v0.4.0/TypeRight-v0.4.0.zip
 ```
 
 > ⚠️ Releases 页面另有 GitHub 自动附带的 "Source code (zip)"——发直达链接避免混淆。
@@ -55,3 +55,4 @@ https://github.com/gycxrbb/TypeRight/releases/download/v0.3.1/TypeRight-v0.3.1.z
 | 0.2.7 | 2026-11-08 | 进度窗居中 |
 | 0.3.0 | 2026-11-09 | 文本同类（字义匹配）+ 着重号 |
 | 0.3.1 | 2026-11-09 | XML 属性重复修复 |
+| 0.4.0 | 2026-11-10 | 填表防崩套件（照片严丝合缝入格 + PPT 式悬浮填表框） |

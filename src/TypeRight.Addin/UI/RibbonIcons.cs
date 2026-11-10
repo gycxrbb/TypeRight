@@ -21,7 +21,7 @@ namespace TypeRight.Addin.UI
         {
             try
             {
-                bool small = controlId == "ctxSimilar" || controlId == "btnProfileSave" || controlId == "btnProfileManage" || controlId == "btnHelp";
+                bool small = controlId.StartsWith("ctx") || controlId == "btnProfileSave" || controlId == "btnProfileManage" || controlId == "btnHelp";
                 int size = small ? 16 : 32;
                 RenderTargetBitmap bmp = Render(controlId, size, theme);
                 object pic = ToPictureDisp(bmp);
@@ -71,6 +71,21 @@ namespace TypeRight.Addin.UI
                     case "btnTextSimilar":
                     case "ctxTextSimilar":
                         DrawTextMatch(dc, u, fg, acc);
+                        break;
+                    case "btnPhotoFit":
+                    case "ctxPhotoFit":
+                        DrawPhotoFit(dc, u, fg, acc);
+                        break;
+                    case "btnCellBox":
+                    case "ctxCellBox":
+                        DrawCellBox(dc, u, fg, acc);
+                        break;
+                    case "btnTableGuard":
+                    case "ctxTableGuard":
+                        DrawTableGuard(dc, u, fg, acc);
+                        break;
+                    case "btnUnderlineFill":
+                        DrawUnderlineFill(dc, u, fg, acc);
                         break;
                 }
             }
@@ -269,6 +284,89 @@ namespace TypeRight.Addin.UI
             // 两行文本条（灰）
             Bar(dc, Solid(fg, 0.9), 10, 9, 12, 3.2);
             Bar(dc, Solid(fg, 0.9), 10, 16, 10, 3.2);
+            dc.Pop();
+        }
+
+        /// <summary>照片入格：单元格外框（灰）+ 证件照人像半身剪影（蓝）。</summary>
+        private static void DrawPhotoFit(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            // 单元格外框
+            dc.DrawRoundedRectangle(null, Pen(fg, 2.0), new Rect(5.5, 4.0, 21.0, 24.0), 2.2, 2.2);
+            // 人像头部（蓝）
+            dc.DrawEllipse(Solid(acc, 0.95), null, new Point(16.0, 12.2), 4.0, 4.0);
+            // 人像肩部半圆弧（蓝）
+            var shoulders = new StreamGeometry();
+            using (StreamGeometryContext sgc = shoulders.Open())
+            {
+                sgc.BeginFigure(new Point(9.2, 24.5), true, true);
+                sgc.BezierTo(new Point(9.8, 18.2), new Point(22.2, 18.2), new Point(22.8, 24.5), true, false);
+            }
+            shoulders.Freeze();
+            dc.DrawGeometry(Solid(acc, 0.95), null, shoulders);
+            dc.Pop();
+        }
+
+        /// <summary>悬浮填表框：底层表格线（灰）+ 上方悬浮虚线文本框与文本行（蓝）。</summary>
+        private static void DrawCellBox(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            // 底层表格角参考线（灰）
+            Pen gp = Pen(fg, 1.8, 0.65);
+            Line(dc, gp, 4.0, 7.0, 4.0, 26.5);
+            Line(dc, gp, 4.0, 26.5, 24.0, 26.5);
+            // 悬浮文本框（蓝虚线框）
+            var dashPen = new Pen(Solid(acc, 1.0), 1.9)
+            {
+                StartLineCap = PenLineCap.Round,
+                EndLineCap = PenLineCap.Round,
+                DashCap = PenLineCap.Round,
+                LineJoin = PenLineJoin.Round,
+                DashStyle = new DashStyle(new double[] { 2.4, 1.6 }, 0)
+            };
+            dashPen.Freeze();
+            dc.DrawRoundedRectangle(null, dashPen, new Rect(7.5, 5.0, 20.5, 18.0), 2.2, 2.2);
+            // 框内两行文字
+            Bar(dc, Solid(fg, 0.9), 11.0, 9.5, 13.0, 2.5);
+            Bar(dc, Solid(acc, 0.95), 11.0, 15.0, 9.5, 2.5);
+            dc.Pop();
+        }
+
+        /// <summary>锁表防崩：表格网格（灰）+ 右下角锁头（蓝）。</summary>
+        private static void DrawTableGuard(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            Pen gp = Pen(fg, 1.9);
+            dc.DrawRoundedRectangle(null, gp, new Rect(4.0, 5.0, 18.0, 18.0), 2.0, 2.0);
+            Line(dc, gp, 4.0, 11.0, 22.0, 11.0);
+            Line(dc, gp, 12.5, 5.0, 12.5, 23.0);
+            // 右下角蓝色挂锁
+            dc.DrawRoundedRectangle(Solid(acc, 0.95), null, new Rect(17.5, 18.0, 10.5, 9.0), 1.8, 1.8);
+            var shackle = new StreamGeometry();
+            using (StreamGeometryContext sgc = shackle.Open())
+            {
+                sgc.BeginFigure(new Point(19.8, 18.0), false, false);
+                sgc.LineTo(new Point(19.8, 15.2), true, false);
+                sgc.BezierTo(new Point(19.8, 12.5), new Point(25.7, 12.5), new Point(25.7, 15.2), true, false);
+                sgc.LineTo(new Point(25.7, 18.0), true, false);
+            }
+            shackle.Freeze();
+            dc.DrawGeometry(null, Pen(acc, 2.0), shackle);
+            dc.Pop();
+        }
+
+        /// <summary>下划线填空：上方文本条（灰）+ 底部定宽带端点的蓝色下划线。</summary>
+        private static void DrawUnderlineFill(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            // 上方居中文字示意
+            Bar(dc, Solid(fg, 0.9), 8.5, 8.5, 15.0, 3.0);
+            Bar(dc, Solid(fg, 0.9), 11.0, 14.5, 10.0, 3.0);
+            // 底部定宽下划线 + 两侧卡尺竖线（代表“定宽零位移”）
+            Pen ap = Pen(acc, 2.4);
+            Line(dc, ap, 4.5, 23.5, 27.5, 23.5);
+            Line(dc, ap, 4.5, 20.0, 4.5, 26.5);
+            Line(dc, ap, 27.5, 20.0, 27.5, 26.5);
             dc.Pop();
         }
 

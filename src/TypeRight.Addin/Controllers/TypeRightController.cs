@@ -846,6 +846,98 @@ namespace TypeRight.Addin.Controllers
             }
         }
 
+        // ───────────────────────── 填表与版面防崩套件 ─────────────────────────
+
+        /// <summary>📸 证件照一键严丝合缝入格（支持剪贴板/选文件/已粘贴图片转悬浮）。</summary>
+        public void FitPhotoToCell(string forceFilePath = null)
+        {
+            try
+            {
+                CloseSession(false);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                PhotoFitResult res = PhotoCellFitter.FitPhoto(App, forceFilePath);
+                sw.Stop();
+                TypeRightAddin.Log("FitPhotoToCell: elapsed=" + sw.ElapsedMilliseconds + "ms (" + res.TimingText + ") success=" + res.Success + " clip=" + res.FromClipboard + " msg=" + res.Message);
+                if (string.IsNullOrEmpty(res.Message)) return;
+
+                if (res.Success && res.FromClipboard)
+                {
+                    // 从剪贴板直接贴入后，提供“换选文件…”按钮，方便用户改从磁盘挑选照片替换
+                    ShowToast(res.Message, "换选文件…", () =>
+                    {
+                        string path = PhotoCellFitter.PromptSelectImageFile();
+                        if (!string.IsNullOrEmpty(path))
+                            FitPhotoToCell(path);
+                    }, 7000);
+                }
+                else
+                {
+                    ShowToast(res.Message, 6000);
+                }
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("FitPhotoToCell 异常: " + ex);
+                ShowToast("照片入格出错：" + ex.Message);
+            }
+        }
+
+        /// <summary>📦 单元格铺设 PPT 式透明悬浮填表框（自动避让底部签字/盖章/日期落款）。</summary>
+        public void PlaceCellTextBox()
+        {
+            try
+            {
+                CloseSession(false);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                CellTextBoxResult res = CellTextBoxPlacer.PlaceInCurrentCell(App);
+                sw.Stop();
+                TypeRightAddin.Log("PlaceCellTextBox: elapsed=" + sw.ElapsedMilliseconds + "ms (" + res.TimingText + ") success=" + res.Success + " sig=" + res.ReservedSignature + " msg=" + res.Message);
+                if (!string.IsNullOrEmpty(res.Message))
+                    ShowToast(res.Message, 6000);
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("PlaceCellTextBox 异常: " + ex);
+                ShowToast("铺设悬浮填表框出错：" + ex.Message);
+            }
+        }
+
+        /// <summary>📏 锁死表格行高列宽 + 溢出智能缩字 + 死守一页。</summary>
+        public void LockAndGuardTable()
+        {
+            try
+            {
+                CloseSession(false);
+                TableGuardResult res = TableGuard.LockAndGuardTable(App);
+                TypeRightAddin.Log("LockAndGuardTable: success=" + res.Success + " rows=" + res.LockedRows + " shrunk=" + res.ShrunkCells + " msg=" + res.Message);
+                if (!string.IsNullOrEmpty(res.Message))
+                    ShowToast(res.Message, 6500);
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("LockAndGuardTable 异常: " + ex);
+                ShowToast("锁表防崩出错：" + ex.Message);
+            }
+        }
+
+        /// <summary>✍️ 表头下划线定宽零位移填空/自动吞空格对齐。</summary>
+        public void FillOrBalanceUnderline()
+        {
+            try
+            {
+                CloseSession(false);
+                UnderlineFillResult res = UnderlineFiller.FillOrBalance(App, UnderlinePromptWindow.Prompt);
+                TypeRightAddin.Log("FillOrBalanceUnderline: success=" + res.Success + " count=" + res.BalancedCount + " msg=" + res.Message);
+                if (!string.IsNullOrEmpty(res.Message))
+                    ShowToast(res.Message, 6000);
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("FillOrBalanceUnderline 异常: " + ex);
+                ShowToast("下划线填空出错：" + ex.Message);
+            }
+        }
+
         public int PendingOpCount { get { return _docOps.Count; } }
 
         // ───────────────────────── 基础 ─────────────────────────

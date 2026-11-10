@@ -8,7 +8,7 @@ namespace TypeRight.Addin
 {
     /// <summary>
     /// TypeRight COM Add-in（PRD v2：指认式批量排版）。
-    /// UI 只有：Ribbon 3 按钮 + 右键菜单 + 浮动格式条 + 轻提示。无任务窗格、无预览弹窗。
+    /// UI 只有：Ribbon 按钮 + 右键菜单 + 浮动格式条 + 轻提示。无任务窗格、无预览弹窗。
     /// </summary>
     [Guid("6C7C9713-51A1-4A55-8C0D-3A4E5F607182")]
     [ProgId("TypeRight.Connect")]
@@ -308,6 +308,26 @@ namespace TypeRight.Addin
             Controller.TextSimilarSelect();
         }
 
+        public void OnPhotoFit(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.FitPhotoToCell();
+        }
+
+        public void OnCellBox(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.PlaceCellTextBox();
+        }
+
+        public void OnTableGuard(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.LockAndGuardTable();
+        }
+
+        public void OnUnderlineFill(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.FillOrBalanceUnderline();
+        }
+
         public void OnProfiles(NetOffice.OfficeApi.IRibbonControl control)
         {
             Controller.OpenProfiles();
@@ -377,6 +397,24 @@ namespace TypeRight.Addin
         public void AutomationConvertFormulas()
         {
             QueueOnWordUiThread(Controller.ConvertFormulas);
+        }
+
+        /// <summary>自动化专用：照片严丝合缝入格。</summary>
+        public void AutomationPhotoFit(string filePath = null)
+        {
+            QueueOnWordUiThread(() => Controller.FitPhotoToCell(filePath));
+        }
+
+        /// <summary>自动化专用：铺设单元格悬浮填表框。</summary>
+        public void AutomationCellBox()
+        {
+            QueueOnWordUiThread(Controller.PlaceCellTextBox);
+        }
+
+        /// <summary>自动化专用：锁表防崩。</summary>
+        public void AutomationTableGuard()
+        {
+            QueueOnWordUiThread(Controller.LockAndGuardTable);
         }
 
         /// <summary>自动化专用：直接 Invalidate 功能区（图标重取链取证）。</summary>

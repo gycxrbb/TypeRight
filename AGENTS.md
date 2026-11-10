@@ -13,7 +13,7 @@ Word/WPS COM 加载项（.NET 4.8 + NetOffice），"指认式批量排版"：光
 | 框架 | .NET Framework 4.8（Win7 SP1+ 可装） |
 | COM 互操作 | NetOffice 1.9.12（WordApi/OfficeApi/VBIDEApi） |
 | UI | WPF（浮动条/进度窗/Toast）；Ribbon XML 自定义功能区 |
-| 测试 | xUnit 45 个单元测试 + TypeRight.Acceptance 21 用例真机验收 |
+| 测试 | xUnit 49 个单元测试 + TypeRight.Acceptance 21 用例真机验收 |
 | 发布 | GitHub Actions tag 触发 → package-release.ps1 → zip |
 
 ## 构建与部署
@@ -31,7 +31,7 @@ tests\TypeRight.Acceptance\bin\Debug\TypeRight.Acceptance.exe
 # 打安装包
 powershell -File tools\package-release.ps1
 
-# 发布：git tag v0.3.1 && git push origin v0.3.1
+# 发布：git tag v0.4.0 && git push origin v0.4.0
 ```
 
 ## 必须遵守的规则
@@ -86,6 +86,10 @@ src/TypeRight.Core/          ← 无 UI 核心库
 │   └── WordFormatUtils.cs   ← 幂等写入工具
 ├── Formulas/                ← MathML → OMML 注入
 │   └── MathmlInjector.cs    ← 全部公式一个 docx + 隐藏草稿一次装载 + 降序 FormattedText
+├── Forms/                   ← 填表防崩套件（v0.4.0 新增）
+│   ├── PhotoCellFitter.cs   ← 证件照严丝合缝入格（两步等比缩放+尺寸微调，零裁切，四边0.75pt内缩）
+│   ├── CellTextBoxPlacer.cs ← PPT式悬浮填表框（表外同页就近锚定，保留原示例与底端签字，零抖动）
+│   └── FormGeometry.cs      ← 单元格与纵向合并格极速几何测绘（扣除行距偏移 + 最少 Information 调用）
 ├── Profiles/                ← 方案存回放
 ├── Settings.cs              ← 用户设置（settings.json）
 └── WordCompat.cs            ← 宿主兼容层（老Word降级 + WPS集合枚举 + UndoRecord）
@@ -93,7 +97,7 @@ src/TypeRight.Core/          ← 无 UI 核心库
 src/TypeRight.Addin/         ← COM 加载项
 ├── TypeRightAddin.cs        ← 入口：Ribbon XML / 事件订阅 / 自动化钩子
 ├── Controllers/
-│   └── TypeRightController.cs ← 编排器：同类选择/文本同类/公式转换/方案/跳转
+│   └── TypeRightController.cs ← 编排器：同类选择/文本同类/公式转换/照片入格/悬浮填表框/方案/跳转
 ├── UI/
 │   ├── FloatBar.xaml(.cs)   ← 浮动格式条（Fluent 换皮 2026-11）
 │   ├── ConvertProgressWindow.cs ← 公式转换进度窗（三层反馈 + Esc 取消）
