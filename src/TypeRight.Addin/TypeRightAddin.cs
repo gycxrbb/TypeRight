@@ -308,6 +308,11 @@ namespace TypeRight.Addin
             Controller.TextSimilarSelect();
         }
 
+        public void OnRenumber(NetOffice.OfficeApi.IRibbonControl control)
+        {
+            Controller.RenumberSequences();
+        }
+
         public void OnPhotoFit(NetOffice.OfficeApi.IRibbonControl control)
         {
             Controller.FitPhotoToCell();
@@ -391,6 +396,20 @@ namespace TypeRight.Addin
         public void AutomationTextSimilarSelect()
         {
             QueueOnWordUiThread(Controller.TextSimilarSelect);
+        }
+
+        /// <summary>自动化专用：序列一键重排（跑在 Word UI/STA 线程，结果经文档文本回读取证）。</summary>
+        public string AutomationRenumberSequences()
+        {
+            string result = null;
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { Controller.RenumberSequences(); result = Controller.LastRenumberSummary; }
+                catch (Exception ex) { result = "ERROR: " + ex.Message; }
+                finally { done.Set(); }
+            });
+            return done.Wait(8000) ? (result ?? "NULL") : "TIMEOUT";
         }
 
         /// <summary>自动化专用：公式转换全流程（进度窗/取消链取证）。</summary>

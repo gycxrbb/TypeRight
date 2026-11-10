@@ -72,6 +72,10 @@ namespace TypeRight.Addin.UI
                     case "ctxTextSimilar":
                         DrawTextMatch(dc, u, fg, acc);
                         break;
+                    case "btnRenumber":
+                    case "ctxRenumber":
+                        DrawRenumber(dc, u, fg, acc);
+                        break;
                     case "btnPhotoFit":
                     case "ctxPhotoFit":
                         DrawPhotoFit(dc, u, fg, acc);
@@ -284,6 +288,36 @@ namespace TypeRight.Addin.UI
             // 两行文本条（灰）
             Bar(dc, Solid(fg, 0.9), 10, 9, 12, 3.2);
             Bar(dc, Solid(fg, 0.9), 10, 16, 10, 3.2);
+            dc.Pop();
+        }
+
+        /// <summary>序列重排：三行编号列表（蓝号牌+灰文本条）+ 右下角循环箭头（重排意象）。</summary>
+        private static void DrawRenumber(DrawingContext dc, double u, Color fg, Color acc)
+        {
+            dc.PushTransform(new ScaleTransform(u, u));
+            // 三行列表：蓝号牌 + 灰文本条
+            double[] ys = { 4.5, 13.0, 21.5 };
+            foreach (double y in ys)
+            {
+                dc.DrawRoundedRectangle(Solid(acc, 0.95), null, new Rect(5.0, y, 5.5, 5.5), 1.4, 1.4);
+                Bar(dc, Solid(fg, 0.9), 12.5, y + 1.2, 6.5, 3.0);
+            }
+            // 循环箭头（蓝）：圆弧 + 箭头头部
+            var arc = new PathGeometry();
+            var fig = new PathFigure { StartPoint = new Point(27.6, 19.9) };
+            fig.Segments.Add(new ArcSegment(new Point(22.3, 27.4), new Size(4.6, 4.6), 0, false, SweepDirection.Clockwise, true));
+            arc.Figures.Add(fig);
+            arc.Freeze();
+            dc.DrawGeometry(null, Pen(acc, 2.4), arc);
+            var head = new StreamGeometry();
+            using (StreamGeometryContext sgc = head.Open())
+            {
+                sgc.BeginFigure(new Point(20.1, 26.1), true, true);
+                sgc.LineTo(new Point(21.5, 28.9), true, false);
+                sgc.LineTo(new Point(23.2, 25.9), true, false);
+            }
+            head.Freeze();
+            dc.DrawGeometry(Solid(acc, 1.0), null, head);
             dc.Pop();
         }
 

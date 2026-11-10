@@ -4,7 +4,7 @@
 
 | 层 | 工具 | 数量 | 覆盖 |
 |---|---|---|---|
-| 单元测试 | xUnit（TypeRight.Core.Tests） | 45 | 签名模型/签名读取/匹配/格式写入/公式片段切分/MathML 预备 |
+| 单元测试 | xUnit（TypeRight.Core.Tests） | 110 | 签名模型/签名读取/匹配/格式写入/公式片段切分/MathML 预备/序列重排（标记解析+切流+断序）/填表几何 |
 | 验收测试 | 真机 COM（TypeRight.Acceptance） | 21 | 全流程黄金文件比对（TC-01~18）+ 修复验收（TC-19~21） |
 
 ## 运行方式
@@ -47,7 +47,7 @@ tests\...\TypeRight.Acceptance.exe tc21  # 指定用例
 
 加载项暴露 `COMAddIn.Object` 接口，测试脚本经 DCOM 调用：
 - `AutomationSimilarSelect()` / `AutomationCloseSession()` / `AutomationJumpNext()`
-- `AutomationConvertFormulas()` / `AutomationTextSimilarSelect()`
+- `AutomationConvertFormulas()` / `AutomationTextSimilarSelect()` / `AutomationRenumberSequences()`
 - `AutomationForceFloatTheme(string)` / `AutomationShowFloatBar()` / `AutomationRefreshRibbon()`
 
 钩子经 `SetTimer` 挂 Word 窗口 → WM_TIMER 回调落在 Word UI 线程（可靠语境）。

@@ -19,6 +19,11 @@
                   supertip="ax²+bx+c=0 这类文本公式批量转为可编辑公式对象，&#10;失败片段原样保留。"
                   getImage="OnGetImage"
                   onAction="OnFormulas" />
+          <button id="btnRenumber" size="large" label="序列重排"
+                  screentip="序列一键重排：插入/删除条目后全文序号重新编号"
+                  supertip="序号乱了？一键把全文 1. 、① 、（1） 、1） 、一、 等序列重排。&#10;只动断序的序列（缺号/重号/乱序），连续的绝不碰；有选区时只处理选区涉及的序列；Ctrl+Z 可整体撤销。"
+                  getImage="OnGetImage"
+                  onAction="OnRenumber" />
         </group>
         <group id="grpForm" label="填表防崩">
           <button id="btnPhotoFit" size="large" label="照片入格"
@@ -62,6 +67,8 @@
       <button id="ctxSimilar" label="同类选择" onAction="OnSimilar"
               insertBeforeMso="Cut" getImage="OnGetImage" />
       <button id="ctxTextSimilar" label="文本同类" onAction="OnTextSimilar"
+              insertBeforeMso="Cut" getImage="OnGetImage" />
+      <button id="ctxRenumber" label="序列一键重排" onAction="OnRenumber"
               insertBeforeMso="Cut" getImage="OnGetImage" />
       <button id="ctxPhotoFit" label="照片严丝合缝入格" onAction="OnPhotoFit"
               insertBeforeMso="Cut" getImage="OnGetImage" />

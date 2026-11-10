@@ -318,6 +318,57 @@ namespace TypeRight.Addin.Controllers
             }
         }
 
+        /// <summary>最近一次序列重排的机读摘要（验收断言用）："changes=N;runs=M"。</summary>
+        public string LastRenumberSummary { get; private set; }
+
+        /// <summary>序列一键重排：全文扫描段首序号（1. ① （1） 1） 一、 等），
+        /// 只把断序的序列（缺号/重号/乱序）重排为 1..n，连续的绝不碰。
+        /// 有选区时只处理选区涉及的序列；整体包一个撤销记录。</summary>
+        public void RenumberSequences()
+        {
+            try
+            {
+                Document doc = ActiveDocument();
+                if (doc == null) { ShowToast("请先打开一个文档"); return; }
+
+                Range scope = null;
+                try
+                {
+                    Selection sel = App.Selection;
+                    if (sel != null && sel.Start < sel.End) scope = sel.Range;
+                }
+                catch { }
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var plan = TypeRight.Sequences.SequenceRenumberer.Plan(doc, scope);
+                TypeRightAddin.Log("序列重排: 计划 " + plan.Changes.Count + " 处 / " + plan.Summaries.Count + " 序列 / " +
+                                   sw.ElapsedMilliseconds + "ms" + (scope != null ? "（选区）" : ""));
+                LastRenumberSummary = "changes=" + plan.Changes.Count + ";runs=" + plan.Summaries.Count +
+                                       ";skipped=" + plan.Skipped.Count + ";ms=" + sw.ElapsedMilliseconds;
+
+                if (plan.Changes.Count == 0)
+                {
+                    string skipNote = plan.Skipped.Count > 0 ? "（" + string.Join("；", plan.Skipped) + "）" : "";
+                    ShowToast("序号全部连续，无需重排 ✓" + skipNote, 6000);
+                    return;
+                }
+
+                var undo = WordCompat.BeginUndo(App, "TypeRight 序列重排");
+                try { TypeRight.Sequences.SequenceRenumberer.Apply(doc, plan); }
+                finally { WordCompat.EndUndo(undo); }
+
+                string detail = string.Join("、", plan.Summaries.ToArray());
+                if (detail.Length > 60) detail = detail.Substring(0, 60) + "…";
+                string skip = plan.Skipped.Count > 0 ? "（跳过: " + string.Join("；", plan.Skipped.ToArray()) + "）" : "";
+                ShowToast("已重排 " + plan.Changes.Count + " 处序号：" + detail + skip + "　Ctrl+Z 可撤销", 7000);
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("RenumberSequences: " + ex);
+                ShowToast("序列重排失败：" + ex.Message, 6000);
+            }
+        }
+
         /// <summary>采样文本模式：优先选区文本；否则光标处向两侧扩展连续词字符（CJK/字母/数字）。</summary>
         private string GetTextPattern()
         {
