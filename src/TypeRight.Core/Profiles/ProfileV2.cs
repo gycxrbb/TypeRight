@@ -73,6 +73,10 @@ namespace TypeRight.Profiles
         [JsonProperty("inTable", NullValueHandling = NullValueHandling.Ignore)]
         public bool? InTable { get; set; }
 
+        /// <summary>Ignore 列表的位标志视图。这是计算属性，不是 Schema 字段：
+        /// 不标 JsonIgnore 的话 Newtonsoft 会把 getter 求值一并写进 JSON（历史文件里已有
+        /// "IgnoreValue": 0 这类冗余键），导出的方案就会带上 Schema 未定义的字段。</summary>
+        [JsonIgnore]
         public Signature.FormatSignature.IgnoreDims IgnoreValue
         {
             get
@@ -192,6 +196,41 @@ namespace TypeRight.Profiles
         }
     }
 
+    /// <summary>方案 id 生成（文件名即 id，见 ProfileStoreV2.Save）。
+    ///
+    /// 纯逻辑、无 Word 依赖，xUnit 直测。历史坑：旧实现用 char.IsLetterOrDigit 兜字符，
+    /// 而它对汉字返回 true —— "预备党员转正" 的 id 就是中文串本身，同名方案落同一个
+    /// %APPDATA%\TypeRight\profiles\&lt;id&gt;.json，第二次保存静默覆盖第一份（只留 .bak）。
+    /// 现在只认 ASCII 字母数字，其余一律折成 '-'，保证 id 永远是安全文件名。</summary>
+    public static class ProfileId
+    {
+        public static string Make(string name)
+        {
+            var sb = new System.Text.StringBuilder();
+            bool lastDash = false;
+            foreach (char c in (name ?? "").Trim())
+            {
+                // 只放行 ASCII：汉字/全角符号折成 '-'，避免中文文件名与方案互相覆盖
+                bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+                if (ok) { sb.Append(char.ToLowerInvariant(c)); lastDash = false; }
+                else if (!lastDash) { sb.Append('-'); lastDash = true; }
+            }
+            string id = sb.ToString().Trim('-');
+            return id.Length > 0 ? id : "profile";
+        }
+
+        /// <summary>在已有 id 集合中取一个不冲突的 id：撞了依次追加 -2、-3 ……
+        /// （Import 的去重逻辑原本内联在 Store 里，一并收进来复用）。</summary>
+        public static string MakeUnique(string name, Func<string, bool> exists)
+        {
+            string id = Make(name);
+            if (exists == null || !exists(id)) return id;
+            int n = 2;
+            while (exists(id + "-" + n)) n++;
+            return id + "-" + n;
+        }
+    }
+
     /// <summary>方案读写/导入导出（PRD P1-1）。目录默认 %APPDATA%\TypeRight\profiles\。</summary>
     public sealed class ProfileStoreV2
     {
@@ -276,13 +315,8 @@ namespace TypeRight.Profiles
         {
             ProfileV2 p;
             if (!TryLoad(sourceFile, out p, out errors)) return null;
-            // 同 id 去重：追加 -imported
-            if (File.Exists(Path.Combine(Directory, p.Id + ".json")))
-            {
-                int n = 2;
-                while (File.Exists(Path.Combine(Directory, p.Id + "-" + n + ".json"))) n++;
-                p.Id = p.Id + "-" + n;
-            }
+            // 同 id 去重：追加 -2、-3 ……
+            p.Id = ProfileId.MakeUnique(p.Id, id => File.Exists(Path.Combine(Directory, id + ".json")));
             Save(p);
             return p.Id;
         }

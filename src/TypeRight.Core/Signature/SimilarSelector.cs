@@ -350,31 +350,102 @@ namespace TypeRight.Signature
 
             /// <summary>把命中单元区间标记为黄色（引导句感知：只标引导句或只标正文）。
             /// 区间必须排除末尾的段落/单元格标记：跨结束标记设置高亮会被 Word 扩散到整段
-            /// （实测：正文单元 [边界, End) 整段变黄，引导区被误染；End-1 后恢复精确）。</summary>
-            public int ApplyUnits(UnitMatchResult match)
+            /// （实测：正文单元 [边界, End) 整段变黄，引导区被误染；End-1 后恢复精确）。
+            ///
+            /// 性能（2026-11，实测 Word COM 往返 ~4.3ms/次）：
+            /// · 每处命中 3 次往返（造 Range / 读原值 / 写高亮）；43 处 ≈ 550ms。
+            /// · 相邻/重叠的命中先合并成连续段——引导句+正文同段的场景能显著减少段数
+            ///   （本机讲义实测：43 处是 43 个分散段，合并无收益；但同段多单元的文档仍有收益）。
+            /// · 真正的解不在这个循环里：把高亮整体挪出点击路径（见 TypeRightController.QueueHighlight），
+            ///   用户感知延迟从 ~1.1s 降到 ~0.5s，染色在后台补完。</summary>
+            public int ApplyUnits(UnitMatchResult match, CharClass onlyClass = CharClass.None)
             {
                 Clear();
                 _curStart = -1;
-                if (match == null) return 0;
+                if (match == null || match.Units.Count == 0) return 0;
+
                 int applied = 0;
+                int runStart = -1, runEnd = -1;
+
                 foreach (MatchUnit u in match.Units)
                 {
-                    try
+                    // 排除段落/单元格标记（跨结束标记设高亮会被 Word 扩散到整段）
+                    int s = u.Start;
+                    int e = u.End > u.Start + 1 ? u.End - 1 : u.End;
+                    if (e <= s) continue;
+
+                    // onlyClass != None 时，只对**该类型的连续字符片段**刷高亮，
+                    // 段内的数字/字母保持原样（"汉字归汉字、数字归数字"）。
+                    List<int[]> spans = onlyClass == CharClass.None
+                        ? new List<int[]> { new[] { s, e } }
+                        : ClassSpans(s, e, onlyClass);
+
+                    foreach (int[] span in spans)
                     {
-                        int end = u.End > u.Start + 1 ? u.End - 1 : u.End;   // 排除段落/单元格标记
-                        Range r = _doc.Range(u.Start, end);
-                        WdColorIndex original = r.HighlightColorIndex;
-                        if (original == WdColorIndex.wdNoHighlight)
-                        {
-                            r.HighlightColorIndex = WdColorIndex.wdYellow;
-                            TouchedStarts.Add(r.Start);
-                            TouchedEnds.Add(r.End);
-                            applied++;
-                        }
+                        int ss = span[0], ee = span[1];
+                        if (ee <= ss) continue;
+
+                        if (runStart < 0) { runStart = ss; runEnd = ee; continue; }
+                        if (ss <= runEnd) { if (ee > runEnd) runEnd = ee; continue; }   // 相邻/重叠 → 并入本段
+
+                        applied += PaintRun(runStart, runEnd);
+                        _lastRunCount++;
+                        runStart = ss; runEnd = ee;
                     }
-                    catch { }
                 }
+                if (runStart >= 0) { applied += PaintRun(runStart, runEnd); _lastRunCount++; }
+
                 return applied;
+            }
+
+            /// <summary>把文档区间 [start,end) 按字符类型切开，只取 want 类型的连续片段。
+            /// 需要读一次区间文本（1 次 COM 往返），之后纯字符串运算。
+            /// 标点/空白不产生片段——它们不该被单独染色。</summary>
+            private List<int[]> ClassSpans(int start, int end, CharClass want)
+            {
+                var result = new List<int[]>();
+                string text;
+                try { text = _doc.Range(start, end).Text ?? ""; }
+                catch { return result; }
+
+                List<CharClassDetector.Run> runs = CharClassDetector.SplitByClass(text);
+                // 合并被标点隔开的同类型片段：少刷几次格式，视觉上仍是连续的一段中文
+                List<CharClassDetector.Run> keep = CharClassDetector.FilterRuns(runs, want, mergeAcrossPunctuation: true);
+                foreach (CharClassDetector.Run r in keep)
+                    result.Add(new[] { start + r.Start, start + r.End });
+                return result;
+            }
+
+            /// <summary>上一次 ApplyUnits 实际画了几段（诊断用）。</summary>
+            private int _lastRunCount;
+            public int LastRunCount { get { return _lastRunCount; } }
+
+            /// <summary>原本就带高亮的区间（退出时按原值恢复，避免把用户自己的高亮抹掉）。</summary>
+            internal readonly List<int[]> PreExisting = new List<int[]>();
+
+            /// <summary>把一个连续区间标黄（原本无高亮的才标）。返回 1=标记成功 / 0=原本已有高亮。
+            ///
+            /// COM 往返账（实测 4.2~4.6ms/次）：造 Range 1 次 + 读原值 1 次 + 写 1 次 = 3 次。
+            /// 43 处命中 = 129 次往返 ≈ 550ms，是"同类选择发顿"的主因。
+            /// 这里省掉的是**写回 TouchedEnds 时的 r.Start/r.End 回读**（原实现每段多 2 次往返），
+            /// 改用区间自身坐标——读原值那 1 次保留：把用户原有高亮抹掉是不可接受的回归。</summary>
+            private int PaintRun(int start, int end)
+            {
+                try
+                {
+                    Range r = _doc.Range(start, end);
+                    WdColorIndex original = r.HighlightColorIndex;
+                    if (original != WdColorIndex.wdNoHighlight)
+                    {
+                        PreExisting.Add(new[] { start, end, (int)original });
+                        return 0;    // 原本有高亮 → 不动（退出时按原值恢复）
+                    }
+                    r.HighlightColorIndex = WdColorIndex.wdYellow;
+                    TouchedStarts.Add(start);
+                    TouchedEnds.Add(end);      // 用自身坐标，不回读 r.Start/r.End
+                    return 1;
+                }
+                catch { return 0; }
             }
 
             /// <summary>把当前跳转处标为强调色底（shading 支持任意 RGB，柔和观感；
@@ -453,6 +524,7 @@ namespace TypeRight.Signature
                 }
                 TouchedStarts.Clear();
                 TouchedEnds.Clear();
+                PreExisting.Clear();   // 原本带高亮的段不归我们管，直接忘记（恢复原值也等于没动）
                 _curStart = -1; _curEnd = -1; _curShaded = false;
             }
         }

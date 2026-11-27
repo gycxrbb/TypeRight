@@ -308,9 +308,12 @@ namespace TypeRight.Signature
         }
 
         /// <summary>引导句感知：把格式改动应用到命中单元区间（只动引导句或只动正文，
-        /// 不再整段写入）。与 Apply 同一套幂等写入/字号护栏/撤销语义。</summary>
+        /// 不再整段写入）。与 Apply 同一套幂等写入/字号护栏/撤销语义。
+        ///
+        /// onlyClass != None 时，只对**该字符类型**的连续片段写入——
+        /// 段内的数字/字母保持原样（用户 2026-11 口径："汉字归汉字、数字归数字"）。</summary>
         public static BatchStats ApplyUnits(Application app, Document doc, IList<MatchUnit> units, FormatChanges changes,
-            string undoName, bool wrapUndo = true)
+            string undoName, bool wrapUndo = true, CharClass onlyClass = CharClass.None)
         {
             if (changes == null || !changes.HasAny)
                 return new BatchStats { Total = units == null ? 0 : units.Count, Changed = 0 };
@@ -328,7 +331,10 @@ namespace TypeRight.Signature
                 {
                     try
                     {
-                        if (ApplyToRanges(TextRangesExcludingMath(doc, u.Start, u.End), changes)) stats.Changed++;
+                        List<Range> targets = onlyClass == CharClass.None
+                            ? TextRangesExcludingMath(doc, u.Start, u.End)
+                            : ClassRanges(doc, u.Start, u.End, onlyClass);
+                        if (ApplyToRanges(targets, changes)) stats.Changed++;
                     }
                     catch { /* 单元失败跳过，不中断批次 */ }
                 }
@@ -339,6 +345,26 @@ namespace TypeRight.Signature
                 if (screenOff) { try { app.ScreenUpdating = true; } catch { } }
             }
             return stats;
+        }
+
+        /// <summary>把区间 [from,to) 按字符类型切开，只返回 want 类型的连续片段（Range 列表）。
+        /// 读一次文本（1 次 COM 往返）后纯字符串运算；合并被标点隔开的同类型片段。</summary>
+        private static List<Range> ClassRanges(Document doc, int from, int to, CharClass want)
+        {
+            var result = new List<Range>();
+            string text;
+            try { text = doc.Range(from, to).Text ?? ""; }
+            catch { return result; }
+
+            List<CharClassDetector.Run> runs = CharClassDetector.SplitByClass(text);
+            List<CharClassDetector.Run> keep = CharClassDetector.FilterRuns(runs, want, mergeAcrossPunctuation: true);
+            foreach (CharClassDetector.Run r in keep)
+            {
+                if (r.Length <= 0) continue;
+                try { result.Add(doc.Range(from + r.Start, from + r.End)); }
+                catch { }
+            }
+            return result;
         }
 
         private static bool ApplyToRanges(List<Range> ranges, FormatChanges c)

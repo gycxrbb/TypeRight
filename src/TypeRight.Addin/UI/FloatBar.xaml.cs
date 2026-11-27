@@ -12,6 +12,7 @@ using WdApplication = NetOffice.WordApi.Application;
 using Paragraph = NetOffice.WordApi.Paragraph;
 using NetOffice.WordApi.Enums;
 using TypeRight.Addin.Controllers;
+using TypeRight.Formatting;
 using TypeRight.Signature;
 
 namespace TypeRight.Addin.UI
@@ -34,7 +35,6 @@ namespace TypeRight.Addin.UI
         private bool _dragging;    // DragMove 模态移动中（此间 Esc 只取消拖动，不关闭会话）
         private bool _userMoved;   // 用户手动拖过：此后不再回弹到样本段落旁
         private Popup _colorPopup;
-        private Popup _sizePopup;
         private OfficeThemeKind _themeKind;
         private int? _fontColorRgb;   // 当前字体色 0xRRGGBB（null=本次会话未设置，取色器回退黑）
 
@@ -98,23 +98,69 @@ namespace TypeRight.Addin.UI
                 WdApp.Window win = app.ActiveWindow;
                 win.GetPoint(out x, out y, out w, out h, sample.Range.Document.Range(anchorStart, anchorStart + 1));
 
+                // GetPoint 只对"当前在视口里"的段落返回屏幕坐标；段落滚出可见区时
+                // 它吐的是负的文档坐标（实测 -31493,-30951），据此定位会把浮条丢到屏幕外。
+                // 这种情形退回"Word 窗口中央偏下"——用户看得见，且样本本来也不在视口里。
+                if (!LooksLikeScreenPoint(x, y))
+                {
+                    CenterOverWordWindow(app);
+                    return;
+                }
+
                 double px = x / scale, py = y / scale, ph = h / scale;
-                double barW = ActualWidth > 0 ? ActualWidth : Width;
-                double barH = ActualHeight > 0 ? ActualHeight : 150;
 
-                // 锚点右下方；右溢出向左平移，下溢出改放上方；最后夹进屏幕
-                double left = px + 18;
-                double top = py + ph + 8;
-                if (top + barH > ScreenBottom(scale) - 8) top = py - barH - 8;
+                // 尺寸用**窗口实际物理尺寸**，不用 Width/ActualWidth。
+                // 坑：Width=760 是含 Margin 的窗口宽，而内容实际 748；在 125% 下
+                // 这点差异会累积成定位偏差（实测按钮命中点与视觉位置差 17px）。
+                double barW, barH;
+                try
+                {
+                    var r0 = new Win32Rect();
+                    if (GetWindowRect(new WindowInteropHelper(this).Handle, out r0) && r0.Right > r0.Left)
+                    {
+                        barW = (r0.Right - r0.Left) / scale;
+                        barH = (r0.Bottom - r0.Top) / scale;
+                    }
+                    else
+                    {
+                        barW = ActualWidth > 0 ? ActualWidth : Width;
+                        barH = ActualHeight > 0 ? ActualHeight : 150;
+                    }
+                }
+                catch
+                {
+                    barW = ActualWidth > 0 ? ActualWidth : Width;
+                    barH = ActualHeight > 0 ? ActualHeight : 150;
+                }
 
+                // 显示器边界（全用**物理像素**判定，最后再换算回 WPF）。
+                // 坑：这块机器的第二屏在 y=-900（负坐标），若把 WPF 坐标和物理坐标混着比，
+                // 夹取基准整块错位——浮条会被夹到第二屏去。
                 var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(x, y));
-                double monLeft = screen.Bounds.Left / scale, monRight = screen.Bounds.Right / scale;
-                if (left + barW > monRight) left = monRight - barW - 12;
-                if (left < monLeft) left = monLeft + 12;
-                if (top < 0) top = 8;
+                System.Drawing.Rectangle pb = screen.Bounds;   // 物理像素
 
-                Left = left;
-                Top = top;
+                // 目标左上角（物理像素）
+                double physLeft = x + 18 * scale;
+                double physTop = y + h + 8 * scale;
+
+                // 下溢出 → 放到锚点上方
+                if (physTop + barH * scale > pb.Bottom - 8 * scale)
+                    physTop = y - barH * scale - 8 * scale;
+
+                // 四边夹回该显示器（物理坐标）
+                double maxLeft = pb.Right - barW * scale - 12 * scale;
+                double minLeft = pb.Left + 8 * scale;
+                if (physLeft > maxLeft) physLeft = maxLeft;
+                if (physLeft < minLeft) physLeft = minLeft;
+
+                double maxTop = pb.Bottom - barH * scale - 12 * scale;
+                double minTop = pb.Top + 8 * scale;
+                if (physTop > maxTop) physTop = maxTop;
+                if (physTop < minTop) physTop = minTop;
+
+                // 物理 → WPF（实测映射：物理 = WPF × scale）
+                Left = physLeft / scale;
+                Top = physTop / scale;
             }
             catch
             {
@@ -123,13 +169,15 @@ namespace TypeRight.Addin.UI
             }
         }
 
-        private double ScreenBottom(double scale)
+        /// <summary>判断 GetPoint 返回的是不是真的屏幕坐标。
+        /// 视口外时 Word 给的是负的文档坐标（量级几万），任何真实屏幕坐标都远不到那里。</summary>
+        private static bool LooksLikeScreenPoint(int x, int y)
         {
-            var s = System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position);
-            return s.Bounds.Bottom / scale;
+            return x > -20000 && y > -20000 && x < 100000 && y < 100000;
         }
 
-        /// <summary>兜底：Word 活动窗口中央偏下（不是屏幕中央——多显示器下更贴近视线）。</summary>
+        /// <summary>兜底：Word 活动窗口中央偏下（不是屏幕中央——多显示器下更贴近视线）。
+        /// 全程用**物理像素**计算，最后统一 ÷scale 转回 WPF，避免与负坐标显示器混算出错。</summary>
         private void CenterOverWordWindow(WdApplication app)
         {
             IntPtr hwnd = WordWindow.Get(app);
@@ -137,15 +185,31 @@ namespace TypeRight.Addin.UI
             var r = new Win32Rect();
             if (!GetWindowRect(hwnd, out r)) { WindowStartupLocation = WindowStartupLocation.CenterScreen; return; }
             double scale = GetDpiScale();
-            double monW = System.Windows.Forms.Screen.FromPoint(
-                new System.Drawing.Point((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2)).Bounds.Width / scale;
             double barW = ActualWidth > 0 ? ActualWidth : Width;
             double barH = ActualHeight > 0 ? ActualHeight : 150;
-            // 窗口矩形是物理像素；宽度取显示器逻辑宽以容多显示器负坐标
-            double wordCenterX = (r.Left + r.Right) / 2.0 / scale;
-            Left = wordCenterX - barW / 2;
-            if (Left + barW > monW) Left = monW - barW - 12;
-            Top = (r.Top + r.Bottom) / 2.0 / scale - barH / 2 + 80;
+
+            // 用 Word 窗口所在显示器做夹取基准（物理像素）
+            var screen = System.Windows.Forms.Screen.FromRectangle(
+                new System.Drawing.Rectangle(r.Left, r.Top, Math.Max(1, r.Right - r.Left), Math.Max(1, r.Bottom - r.Top)));
+            System.Drawing.Rectangle pb = screen.Bounds;
+
+            // 目标位置（物理像素）：窗口水平居中、垂直略偏下
+            double physLeft = (r.Left + r.Right) / 2.0 - barW * scale / 2;
+            double physTop = (r.Top + r.Bottom) / 2.0 - barH * scale / 2 + 80 * scale;
+
+            // 四边夹回该显示器（物理坐标；负坐标屏也成立）
+            double maxLeft = pb.Right - barW * scale - 12 * scale;
+            double minLeft = pb.Left + 8 * scale;
+            if (physLeft > maxLeft) physLeft = maxLeft;
+            if (physLeft < minLeft) physLeft = minLeft;
+
+            double maxTop = pb.Bottom - barH * scale - 12 * scale;
+            double minTop = pb.Top + 8 * scale;
+            if (physTop > maxTop) physTop = maxTop;
+            if (physTop < minTop) physTop = minTop;
+
+            Left = physLeft / scale;
+            Top = physTop / scale;
         }
 
         [DllImport("user32.dll")]
@@ -205,6 +269,10 @@ namespace TypeRight.Addin.UI
 
         private double _dpiScale = 0;
 
+        /// <summary>DPI 缩放（物理像素 / DIP）。
+        /// 关键：只在真拿到 DPI 时缓存。PositionNear 在 Show() 之前调用，那时窗口还没有
+        /// HwndSource，早先的实现会把兜底值 1.0 永久缓存——125% 缩放下 GetPoint 给的物理像素
+        /// 就再也不会被换算，浮条被定位到屏幕外（实测 Top=918 / 屏高 864）。</summary>
         private double GetDpiScale()
         {
             if (_dpiScale > 0) return _dpiScale;
@@ -213,14 +281,56 @@ namespace TypeRight.Addin.UI
                 var source = System.Windows.Interop.HwndSource.FromVisual(this);
                 if (source?.CompositionTarget != null)
                 {
-                    _dpiScale = source.CompositionTarget.TransformToDevice.M11;
-                    return _dpiScale;
+                    double s = source.CompositionTarget.TransformToDevice.M11;
+                    if (s > 0) { _dpiScale = s; return _dpiScale; }
                 }
             }
             catch { }
-            _dpiScale = 1.0;
-            return _dpiScale;
+
+            // 窗口还没上屏：显式建 HWND 后向系统要 DPI（Win7 无此 API → 退回 GDI DpiX）
+            try
+            {
+                IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
+                if (hwnd != IntPtr.Zero)
+                {
+                    if (TryGetDpiForWindow != null)
+                    {
+                        uint dpi = TryGetDpiForWindow(hwnd);
+                        if (dpi > 0) { _dpiScale = dpi / 96.0; return _dpiScale; }
+                    }
+                    using (var g = System.Drawing.Graphics.FromHwnd(hwnd))
+                    {
+                        if (g.DpiX > 0) { _dpiScale = g.DpiX / 96.0; return _dpiScale; }
+                    }
+                }
+            }
+            catch { }
+
+            // 都拿不到：本次按 1.0 算，但绝不缓存——下次调用还要再试（别把猜测固化成事实）
+            return 1.0;
         }
+
+        /// <summary>Win10 1607+ 的 GetDpiForWindow；老系统为 null（PowerShell/PInvoke 均在运行时尝试）。</summary>
+        private static readonly Func<IntPtr, uint> TryGetDpiForWindow = LoadGetDpiForWindow();
+
+        private static Func<IntPtr, uint> LoadGetDpiForWindow()
+        {
+            try
+            {
+                IntPtr user32 = GetModuleHandle("user32.dll");
+                if (user32 == IntPtr.Zero) return null;
+                IntPtr fn = GetProcAddress(user32, "GetDpiForWindow");
+                if (fn == IntPtr.Zero) return null;
+                return (Func<IntPtr, uint>)Marshal.GetDelegateForFunctionPointer(fn, typeof(Func<IntPtr, uint>));
+            }
+            catch { return null; }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+        private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
 
         public void ShowBar()
         {
@@ -292,7 +402,7 @@ namespace TypeRight.Addin.UI
                     {
                         FloatBar bar = null;
                         bool alive = _bar != null && _bar.TryGetTarget(out bar);
-                        if (alive && bar.IsVisible && !bar.IsDragging)
+                        if (alive && bar.IsVisible && !bar.IsDragging && !bar.IsEditingText)
                         {
                             uint pid;
                             GetWindowThreadProcessId(GetForegroundWindow(), out pid);
@@ -314,11 +424,30 @@ namespace TypeRight.Addin.UI
             }
         }
 
-        /// <summary>Esc 钩子入口（拖动中留给 DragMove 自己取消，不重复处理）。</summary>
+        /// <summary>Esc 钩子入口（拖动中留给 DragMove 自己取消，不重复处理）。
+        /// 正在字体/字号框里打字时，Esc 的语义是"放弃这次编辑"，不是"关会话"——
+        /// 由控件自己的 KeyDown 处理（并置 Handled），钩子这里必须放行。</summary>
         private void EscapeClose()
         {
             if (_dragging) return;
             try { _controller.CloseSession(); } catch { }
+        }
+
+        /// <summary>焦点是否在可编辑输入框内（字体/字号打字中）。</summary>
+        private bool IsEditingText
+        {
+            get
+            {
+                try
+                {
+                    var focused = Keyboard.FocusedElement as FrameworkElement;
+                    if (focused == null) return false;
+                    return focused == CboFont
+                        || focused == CboSize
+                        || focused.Name == "PART_EditableTextBox";
+                }
+                catch { return false; }
+            }
         }
 
         /// <summary>拖动进行中（Esc 钩子据此放行按键给 DragMove 取消拖动）。</summary>
@@ -345,6 +474,7 @@ namespace TypeRight.Addin.UI
             try
             {
                 CboFont.SelectedIndex = -1;
+                CboFont.Text = string.Empty;
                 BtnBold.IsChecked = false;
                 BtnItalic.IsChecked = false;
                 BtnUnderline.IsChecked = false;
@@ -353,27 +483,139 @@ namespace TypeRight.Addin.UI
                 ChkIgnoreSize.IsChecked = false;
                 ChkIgnoreColor.IsChecked = false;
                 ChkIgnoreBold.IsChecked = false;
+                ChkIgnoreCharClass.IsChecked = false;
                 ChkIgnoreSize.IsEnabled = false;
                 ChkIgnoreColor.IsEnabled = false;
                 ChkIgnoreBold.IsEnabled = false;
+                ChkIgnoreCharClass.IsEnabled = false;
                 SetColorStrip(null);
                 _fontColorRgb = null;
+                // 字体/字号一起清：新会话在 UpdateSampleInfo 里按样本回填，
+                // 避免上一个会话的字体字号残留到这一次（显示的在跑偏时最难排查）
+                ClearFontDisplayText();
+                _currentSizePt = null;
+                RefreshSizeDisplay();
+                CboFont.ToolTip = "当前字体（点击更换）";
             }
             finally { _suppressEvents = false; }
         }
 
-        /// <summary>会话样本信息 → 字号提示（样本单元首锚字号；NaN 未知显示 —）。</summary>
-        public void UpdateSampleInfo(FormatSignature sampleSig)
+        /// <summary>自动化取证：模拟在字号框打字并回车（验证手输链路真的通）。
+        /// 返回最终显示快照；解析失败会有 toast，这里只关心最终显示的文本。</summary>
+        public string AutomationTypeSize(string text)
         {
-            _currentSizePt = sampleSig.SizePt;
-            RefreshSizeDisplay();
+            try
+            {
+                CboSize.Text = text ?? "";
+                CommitTypedSize();
+                return GetDisplaySnapshot();
+            }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
         }
 
+        /// <summary>自动化取证：模拟在字体框打字并回车。</summary>
+        public string AutomationTypeFont(string text)
+        {
+            try
+            {
+                CboFont.Text = text ?? "";
+                CommitTypedFont();
+                return GetDisplaySnapshot();
+            }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
+        }
+
+        /// <summary>自动化取证：当前字体/字号显示的真实文本（"宋体|四号"）。
+        /// 验收需要断言"浮条显示了什么"，而不是断言内部字段——显示错了字段也会是"对的"。</summary>
+        public string GetDisplaySnapshot()
+        {
+            // 可编辑 ComboBox：手输后 SelectedItem 可能为 null 而 Text 有值，两者都要看
+            string font = CboFont.Text;
+            if (string.IsNullOrEmpty(font)) font = CboFont.SelectedItem as string;
+            if (string.IsNullOrEmpty(font)) font = _currentFontName ?? "";
+            return font + "|" + CurrentSizeText();
+        }
+
+        /// <summary>字号框当前文本（可编辑 ComboBox 的 Text；空则回退到"未读到"占位）。</summary>
+        private string CurrentSizeText()
+        {
+            string t = CboSize.Text;
+            return string.IsNullOrEmpty(t) ? "—" : t;
+        }
+
+        /// <summary>会话样本信息 → 字号提示（样本单元首锚字号；NaN 未知显示 —）。
+        /// 同时回填样本字体：同类选择生效后浮条要像 Word「开始」选项卡那样
+        /// 直接显示当前选中同类的字体与字号，而不是空白下拉 + 纯数字。
+        /// 注意：文本同类模式下 SampleSignature 是 default(struct)，SizePt 为 0 而非 NaN，
+        /// 必须按"非正数=未知"兜底，否则字号框会显示 0。</summary>
+        public void UpdateSampleInfo(FormatSignature sampleSig)
+        {
+            _currentSizePt = IsUsableSize(sampleSig.SizePt) ? sampleSig.SizePt : (double?)null;
+            RefreshSizeDisplay();
+            RefreshSampleFontDisplay(sampleSig.EastAsiaFont);
+        }
+
+        /// <summary>合法字号判定：Word 字号恒为正；0/负数/NaN 都是"读不到"（default 结构体的 SizePt=0）。</summary>
+        private static bool IsUsableSize(double pt)
+        {
+            return !double.IsNaN(pt) && !double.IsInfinity(pt) && pt > 0;
+        }
+
+        /// <summary>字号显示：中文字号档位显示「四号」/「小四」，非档位值仍显示数值。
+        /// 文案口径统一走 ChineseFontSizes（纯逻辑层，xUnit 已覆盖）。
+        /// 可编辑 ComboBox：把文本写回 Text（不改 Items，避免污染档位列表）。</summary>
         private void RefreshSizeDisplay()
         {
-            string t = _currentSizePt.HasValue ? _currentSizePt.Value.ToString("0.#") : "—";
-            var block = FindName("TxtSize") as TextBlock;
-            if (block != null && block.Text != t) block.Text = t;
+            string t = _currentSizePt.HasValue
+                ? ChineseFontSizes.Label(_currentSizePt.Value)
+                : "—";
+
+            _suppressEvents = true;
+            try
+            {
+                CboSize.Text = t;
+                CboSize.ToolTip = _currentSizePt.HasValue
+                    ? "当前 " + ChineseFontSizes.Description(_currentSizePt.Value) + "（可直接输入：四号 / 14 / 12.5）"
+                    : "输入字号：四号、小四、14、12.5 或 14磅（回车确认）";
+            }
+            finally { _suppressEvents = false; }
+        }
+
+        /// <summary>字体框回填样本的中文字体（与字号同一时机）。
+        /// 列表里没有该字体时（主题字体如「+中文正文」/第三方字体/已卸载字体）直接写 Text 显示原名，
+        /// 而不是留空——Word 原生在同样情况下也显示这个名字，留空会让用户以为"没读到字体"。
+        /// 用户手动改过字体后会话内不再回填，防把用户的输入冲掉。</summary>
+        private void RefreshSampleFontDisplay(string eaFont)
+        {
+            if (_suppressEvents) return;
+            if (string.IsNullOrEmpty(eaFont)) return;
+
+            _suppressEvents = true;
+            try
+            {
+                string matched = null;
+                for (int i = 0; i < CboFont.Items.Count; i++)
+                {
+                    string item = CboFont.Items[i] as string;
+                    if (string.Equals(item, eaFont, StringComparison.OrdinalIgnoreCase)) { matched = item; break; }
+                }
+
+                // 可编辑 ComboBox：有匹配就选中（下拉能高亮），否则直接写 Text 显示原名。
+                // 不再往 Items 里插临时项——打字录入后插入/移除会把用户看得见的列表搞脏。
+                if (matched != null) CboFont.SelectedItem = matched;
+                else { CboFont.SelectedIndex = -1; CboFont.Text = eaFont; }
+
+                _currentFontName = matched ?? eaFont;
+                CboFont.ToolTip = "当前字体 " + eaFont + "（可直接输入更换）";
+            }
+            finally { _suppressEvents = false; }
+        }
+
+        /// <summary>清掉会话级的字体显示状态（换会话时调用）。</summary>
+        private void ClearFontDisplayText()
+        {
+            _currentFontName = null;
+            try { CboFont.Text = string.Empty; } catch { }
         }
 
         /// <summary>应用字号并把提示刷成新值。</summary>
@@ -415,48 +657,67 @@ namespace TypeRight.Addin.UI
                 ApplySize(next);
         }
 
-        /// <summary>字号下拉（与颜色面板同款弹层，点选即应用）。</summary>
-        private void OnSizePopup(object sender, RoutedEventArgs e)
+        /// <summary>字号框展开前填档位（中文名双行对照：四号 / 14）。
+        /// 每次展开重建，保证"当前值"高亮跟着最新状态走。</summary>
+        private void OnSizeDropDownOpened(object sender, EventArgs e)
         {
-            var panelBg = BrushOf("PopupBgBrush");
-            var panelBorder = BrushOf("PopupBorderBrush");
-            var accent = BrushOf("AccentBrush");
-            var textBrush = BrushOf("TextBrush");
-            var hoverBrush = BrushOf("ItemHoverBrush");
-
-            var grid = new UniformGrid { Columns = 5 };
-            foreach (double s in SizeSteps)
+            _suppressEvents = true;
+            try
             {
-                double val = s;
-                var item = new Border
-                {
-                    Background = Brushes.Transparent, CornerRadius = new CornerRadius(4),
-                    Margin = new Thickness(2), Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand,
-                    Child = new TextBlock
-                    {
-                        Text = val.ToString("0.#"), FontSize = 12.5,
-                        Foreground = _currentSizePt.HasValue && Math.Abs(_currentSizePt.Value - val) < 0.01
-                            ? accent : textBrush
-                    }
-                };
-                if (_currentSizePt.HasValue && Math.Abs(_currentSizePt.Value - val) < 0.01)
-                    item.Background = hoverBrush;
-                item.MouseLeftButtonUp += (s2, _) => { if (_sizePopup != null) _sizePopup.IsOpen = false; ApplySize(val); };
-                grid.Children.Add(item);
+                CboSize.Items.Clear();
+                foreach (double s in SizeSteps)
+                    CboSize.Items.Add(new SizeChoice(s));
+                CboSize.SelectedIndex = -1;   // 不留选择，"当前值"只体现在文字上
             }
+            finally { _suppressEvents = false; }
+        }
 
-            _sizePopup = new Popup
+        /// <summary>字号档位项：显示「四号 / 14」。ToString 供可编辑 TextBox 采纳时取干净值。</summary>
+        private sealed class SizeChoice
+        {
+            public readonly double Pt;
+            public SizeChoice(double pt) { Pt = pt; }
+            public override string ToString() { return ChineseFontSizes.Label(Pt); }
+        }
+
+        /// <summary>从下拉里选了一个档位（可编辑 ComboBox：用户打字时也会触发，需过滤）。</summary>
+        private void OnSizeComboChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            var choice = CboSize.SelectedItem as SizeChoice;
+            if (choice == null) return;   // 手输文本不是档位项 → 交给 KeyDown/失焦提交
+            ApplySize(choice.Pt);
+        }
+
+        /// <summary>字号框按键：回车提交手输；Esc 放弃本次编辑（不关会话）；上下键交给下拉。</summary>
+        private void OnSizeKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
             {
-                Child = new Border
-                {
-                    Background = panelBg, CornerRadius = new CornerRadius(6),
-                    BorderBrush = panelBorder, BorderThickness = new Thickness(1),
-                    Padding = new Thickness(5), Child = grid
-                },
-                PlacementTarget = BtnSize, Placement = PlacementMode.Bottom,
-                StaysOpen = false, AllowsTransparency = true
-            };
-            _sizePopup.IsOpen = true;
+                CommitTypedSize();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                // 正在改字号时 Esc：先还原显示，不关整个会话（用户意图是"不改了"）
+                RefreshSizeDisplay();
+                Keyboard.ClearFocus();
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>提交手输字号。解析不了就还原显示并提示——绝不静默改成别的值。</summary>
+        private void CommitTypedSize()
+        {
+            string raw = CboSize.Text;
+            double? pt = ChineseFontSizes.TryParse(raw);
+            if (!pt.HasValue)
+            {
+                RefreshSizeDisplay();
+                _controller.ShowToast("字号「" + (raw ?? "").Trim() + "」无法识别：可输入 四号、小四、14、12.5 或 14磅");
+                return;
+            }
+            ApplySize(pt.Value);
         }
 
         private void SetColorStrip(int? rgb)
@@ -514,6 +775,74 @@ namespace TypeRight.Addin.UI
             string font = CboFont.SelectedItem as string;
             if (string.IsNullOrEmpty(font)) return;
             _controller.ApplyChanges(new FormatChanges { EastAsiaFont = font });
+        }
+
+        /// <summary>字体框按键：回车提交手输字体名；Esc 放弃本次编辑（不关会话）。</summary>
+        private void OnFontKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                CommitTypedFont();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                // 正在改字体时 Esc：还原显示，不关整个会话
+                _suppressEvents = true;
+                try { if (_currentFontName != null) CboFont.Text = _currentFontName; } catch { }
+                finally { _suppressEvents = false; }
+                Keyboard.ClearFocus();
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>离开字体框时提交手输（Word 同款行为：改完点别处即生效）。</summary>
+        private void OnFontLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (_suppressEvents) return;
+            CommitTypedFont();
+        }
+
+        private string _currentFontName;
+
+        /// <summary>提交手输字体名。空输入=不做改动；不允许"静默清空"。</summary>
+        private void CommitTypedFont()
+        {
+            string raw = (CboFont.Text ?? "").Trim();
+            if (raw.Length == 0) return;
+            if (!LooksLikeFontName(raw))
+            {
+                // 还原显示并提示：字体名里出现控制字符多半是误触/输入法残留
+                _suppressEvents = true;
+                try { CboFont.Text = _currentFontName ?? string.Empty; } catch { }
+                finally { _suppressEvents = false; }
+                _controller.ShowToast("字体名「" + raw + "」无效");
+                return;
+            }
+            if (string.Equals(raw, _currentFontName, StringComparison.OrdinalIgnoreCase)) return;
+
+            _currentFontName = raw;
+            _controller.ApplyChanges(new FormatChanges { EastAsiaFont = raw });
+
+            // 可编辑 ComboBox 在外部改 Text 后会把 Text 与 SelectedItem 弄成不一致；
+            // 这里显式回写一次，保证框里显示的就是刚应用的字体（否则快照/界面会读回旧值）。
+            _suppressEvents = true;
+            try
+            {
+                CboFont.SelectedIndex = -1;
+                CboFont.Text = raw;
+                CboFont.ToolTip = "当前字体 " + raw + "（可直接输入更换）";
+            }
+            finally { _suppressEvents = false; }
+        }
+
+        /// <summary>字体名基本合法性：非空、无控制字符、长度合理（Word 字体名上限 32 字符）。</summary>
+        private static bool LooksLikeFontName(string s)
+        {
+            if (string.IsNullOrEmpty(s) || s.Length > 32) return false;
+            foreach (char c in s)
+                if (char.IsControl(c)) return false;
+            return true;
         }
 
         private void OnBoldToggled(object sender, RoutedEventArgs e)
@@ -718,6 +1047,7 @@ namespace TypeRight.Addin.UI
             ChkIgnoreSize.IsEnabled = !strict;
             ChkIgnoreColor.IsEnabled = !strict;
             ChkIgnoreBold.IsEnabled = !strict;
+            ChkIgnoreCharClass.IsEnabled = !strict;
             _controller.OnIgnoreChanged(ComputeIgnore());
         }
 
@@ -734,6 +1064,7 @@ namespace TypeRight.Addin.UI
             if (ChkIgnoreSize.IsChecked == true) d |= FormatSignature.IgnoreDims.SizePt;
             if (ChkIgnoreColor.IsChecked == true) d |= FormatSignature.IgnoreDims.Color;
             if (ChkIgnoreBold.IsChecked == true) d |= FormatSignature.IgnoreDims.Bold;
+            if (ChkIgnoreCharClass.IsChecked == true) d |= FormatSignature.IgnoreDims.CharClass;
             return d;
         }
 
@@ -742,6 +1073,7 @@ namespace TypeRight.Addin.UI
             if (e.Key == Key.Escape)
             {
                 if (_dragging) { e.Handled = true; return; } // 拖动中 Esc 仅取消本次拖动（DragMove 弹回原位）
+                if (IsEditingText) return;                   // 打字中 Esc = 放弃本次编辑（控件自己处理）
                 _controller.CloseSession();
                 e.Handled = true;
             }
@@ -779,6 +1111,7 @@ namespace TypeRight.Addin.UI
                 ChkIgnoreSize.Visibility = Visibility.Collapsed;
                 ChkIgnoreColor.Visibility = Visibility.Collapsed;
                 ChkIgnoreBold.Visibility = Visibility.Collapsed;
+                ChkIgnoreCharClass.Visibility = Visibility.Collapsed;
                 TxtPattern.Visibility = Visibility.Visible;
                 TxtPattern.Text = string.Format("「{0}」× {1}", pattern, count);
                 ChkNoNeg.Visibility = Visibility.Visible;
@@ -797,6 +1130,7 @@ namespace TypeRight.Addin.UI
                 ChkIgnoreSize.Visibility = Visibility.Visible;
                 ChkIgnoreColor.Visibility = Visibility.Visible;
                 ChkIgnoreBold.Visibility = Visibility.Visible;
+                ChkIgnoreCharClass.Visibility = Visibility.Visible;
                 TxtPattern.Visibility = Visibility.Collapsed;
                 ChkNoNeg.Visibility = Visibility.Collapsed;
             }
@@ -881,9 +1215,75 @@ namespace TypeRight.Addin.UI
             PopEmphasis.IsOpen = true;
         }
 
+        /// <summary>自动化取证：✕ 按钮相对窗口的**物理**位置（用于标定命中区）。
+        /// 不用 PointToScreen —— 实测它的返回值与实际命中点偏差 ~17px（DPI 虚拟化）。
+        /// 改为用窗口物理矩形 + 按钮在 WPF 树内的相对位置（×scale）来算。</summary>
+        public string ProbeCloseButtonPhysical()
+        {
+            try
+            {
+                var helper = new WindowInteropHelper(this);
+                var r = new Win32Rect();
+                if (!GetWindowRect(helper.Handle, out r)) return "err:GetWindowRect";
+                double scale = GetDpiScale();
+
+                // 按钮相对窗口根元素的位置（WPF 逻辑单位）
+                var root = Content as UIElement;
+                if (root == null) return "err:no-root";
+                Point p = BtnClose.TransformToAncestor(root).Transform(new Point(0, 0));
+                double bw = BtnClose.ActualWidth, bh = BtnClose.ActualHeight;
+
+                int physL = r.Left + (int)Math.Round(p.X * scale);
+                int physT = r.Top + (int)Math.Round(p.Y * scale);
+                int physW = (int)Math.Round(bw * scale);
+                int physH = (int)Math.Round(bh * scale);
+
+                return string.Format("win=({0},{1}) {2}x{3} scale={4:0.##} | btnWpf=({5:0.#},{6:0.#}) {7:0.#}x{8:0.#} | btnPhys=({9},{10}) {11}x{12} | center=({13},{14})",
+                    r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, scale,
+                    p.X, p.Y, bw, bh,
+                    physL, physT, physW, physH,
+                    physL + physW / 2, physT + physH / 2);
+            }
+            catch (Exception ex) { return "err:" + ex.Message; }
+        }
+
+        /// <summary>自动化取证：把浮条窗口移到指定 WPF 坐标，读回物理矩形，
+        /// 用于标定 Left/Top(WPF) ↔ GetWindowRect(物理) 的真实映射关系。</summary>
+        public string ProbeCoordinateMapping(double left, double top)
+        {
+            try
+            {
+                Left = left;
+                Top = top;
+                UpdateLayout();
+                var helper = new WindowInteropHelper(this);
+                IntPtr hwnd = helper.Handle;
+                var r = new Win32Rect();
+                bool ok = GetWindowRect(hwnd, out r);
+                return string.Format("set=({0},{1}) phy=({2},{3}) size={4}x{5} scale={6:0.###} ok={7}",
+                    left, top, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, GetDpiScale(), ok ? 1 : 0);
+            }
+            catch (Exception ex) { return "err:" + ex.Message; }
+        }
+
         private void OnClose(object sender, RoutedEventArgs e)
         {
+            TypeRightAddin.Log("FloatBar.OnClose: 点击了关闭按钮");
             _controller.CloseSession();
+            TypeRightAddin.Log("FloatBar.OnClose: CloseSession 返回, IsVisible=" + IsVisible);
+        }
+
+        /// <summary>自动化取证：读当前窗口是否可见 + 关闭按钮的屏幕坐标（用于真机点击测试）。</summary>
+        public string GetCloseButtonProbe()
+        {
+            try
+            {
+                if (!IsLoaded || !IsVisible) return "not-visible";
+                Point p = BtnClose.PointToScreen(new Point(BtnClose.ActualWidth / 2, BtnClose.ActualHeight / 2));
+                return string.Format("visible=1 btnCenter=({0},{1}) btnSize={2}x{3} barVisible={4}",
+                    (int)p.X, (int)p.Y, (int)BtnClose.ActualWidth, (int)BtnClose.ActualHeight, IsVisible ? 1 : 0);
+            }
+            catch (Exception ex) { return "err:" + ex.Message; }
         }
     }
 }

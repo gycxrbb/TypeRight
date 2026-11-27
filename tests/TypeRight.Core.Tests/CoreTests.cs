@@ -221,6 +221,70 @@ namespace TypeRight.Tests
             bad.Id = "";
             Assert.Throws<ProfileValidationException>(() => store.Save(bad));
         }
+
+        /// <summary>IgnoreValue 是计算属性，不能进 JSON（历史文件里已有 "IgnoreValue": 0 污染）。</summary>
+        [Fact]
+        public void JsonDoesNotSerializeComputedIgnoreValue()
+        {
+            ProfileV2 p = Valid();
+            string json = JsonConvert.SerializeObject(p);
+            Assert.DoesNotContain("IgnoreValue", json);
+            Assert.Contains("\"ignore\"", json);      // 真正的 Schema 字段还在
+        }
+    }
+
+    /// <summary>方案 id 生成：id 即磁盘文件名，必须永远是 ASCII 安全名且不撞名。</summary>
+    public class ProfileIdTests
+    {
+        [Theory]
+        [InlineData("数学讲义", "profile")]          // 纯中文没有可保留字符 → 兜底，绝不返回中文文件名
+        [InlineData("预备党员转正", "profile")]
+        [InlineData("Math Lecture", "math-lecture")]
+        [InlineData("  多  空格  ", "profile")]      // 汉字被折成 '-' 后只剩分隔符 → 兜底
+        [InlineData("2026 方案 A", "2026-a")]
+        public void Make_OnlyKeepsAscii(string name, string expected)
+        {
+            Assert.Equal(expected, ProfileId.Make(name));
+        }
+
+        [Fact]
+        public void Make_EveryResultIsASafeFileName()
+        {
+            // 无论输入什么，结果都不能含路径分隔符或中文（否则会写到意外位置 / 与同名方案互覆盖）
+            foreach (string name in new[] { "数学讲义", "../逃逸", "a/b\\c", "预备党员转正", "", null, "   " })
+            {
+                string id = ProfileId.Make(name);
+                Assert.False(string.IsNullOrEmpty(id));
+                Assert.DoesNotContain("/", id);
+                Assert.DoesNotContain("\\", id);
+                foreach (char c in id)
+                    Assert.True((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-',
+                        "非法字符 '" + c + "' 出现在 id: " + id);
+            }
+        }
+
+        [Fact]
+        public void MakeUnique_AvoidsCollision()
+        {
+            var taken = new HashSet<string>();
+            string first = ProfileId.MakeUnique("预备党员转正", taken.Contains);
+            taken.Add(first);
+            string second = ProfileId.MakeUnique("预备党员转正", taken.Contains);
+            taken.Add(second);
+            string third = ProfileId.MakeUnique("预备党员转正", taken.Contains);
+
+            Assert.NotEqual(first, second);
+            Assert.NotEqual(second, third);
+            Assert.Equal("profile", first);
+            Assert.Equal("profile-2", second);
+            Assert.Equal("profile-3", third);
+        }
+
+        [Fact]
+        public void MakeUnique_NoCollisionKeepsCleanId()
+        {
+            Assert.Equal("math-lecture", ProfileId.MakeUnique("Math Lecture", _ => false));
+        }
     }
 
     public class WordFormatUtilsTests

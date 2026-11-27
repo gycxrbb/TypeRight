@@ -5,9 +5,9 @@
 ```powershell
 # 1. 版本号已更新（TypeRight.Addin.csproj <Version>）
 # 2. 提交推送
-git add -A && git commit -m "v0.4.0" && git push origin main
+git add -A && git commit -m "v0.5.0" && git push origin main
 # 3. 打 tag（触发 GitHub Actions 自动构建+发 Release）
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.5.0 && git push origin v0.5.0
 # 4. 等 Actions 跑完（~5 分钟），产物自动挂 Release
 ```
 
@@ -57,3 +57,4 @@ https://github.com/gycxrbb/TypeRight/releases/download/v0.4.0/TypeRight-v0.4.0.z
 | 0.3.1 | 2026-11-09 | XML 属性重复修复 |
 | 0.4.0 | 2026-11-10 | 填表防崩套件（照片严丝合缝入格 + PPT 式悬浮填表框） |
 | 0.5.0 | 2026-11-10 | 序列一键重排 + 字体颜色板扩展（标准色 + 系统取色器） |
+| 0.6.0 | 2026-11-27 | 方案功能重构（拆「存为方案」/「我的方案」两窗、规则合并修复、人话描述）+ 全窗口主题系统（ThemedWindow）+ 字符类型维度（CharClass） |

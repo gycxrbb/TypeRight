@@ -108,6 +108,64 @@ namespace TypeRight.Acceptance
                 try { app.Quit(); app.Dispose(); } catch { }
                 return 0;
             }
+            if (filter == "clsverify")
+            {
+                string vp = args.Length > 1 ? args[1] : null;
+                if (string.IsNullOrEmpty(vp)) { Console.WriteLine("用法: clsverify <docxPath>"); return 2; }
+                int vf = DiagClassFilter.Run(env, vp);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return vf;
+            }
+            if (filter == "concept")
+            {
+                string cp = args.Length > 1 ? args[1] : null;
+                if (string.IsNullOrEmpty(cp)) { Console.WriteLine("用法: concept <docxPath>"); return 2; }
+                int cr = DiagConcept.Run(env, cp);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return cr;
+            }
+            if (filter == "segment")
+            {
+                string sp = args.Length > 1 ? args[1] : null;
+                if (string.IsNullOrEmpty(sp)) { Console.WriteLine("用法: segment <docxPath>"); return 2; }
+                int sg = DiagSegment.Run(env, sp);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return sg;
+            }
+            if (filter == "runs")
+            {
+                string rp = args.Length > 1 ? args[1] : null;
+                if (string.IsNullOrEmpty(rp)) { Console.WriteLine("用法: runs <docxPath>"); return 2; }
+                return DiagRuns.Run(rp);
+            }
+            if (filter == "granularity")
+            {
+                string gp = args.Length > 1 ? args[1] : null;
+                if (string.IsNullOrEmpty(gp)) { Console.WriteLine("用法: granularity <docxPath>"); return 2; }
+                int g = DiagGranularity.Run(env, gp);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return g;
+            }
+            if (filter == "audit")
+            {
+                string docPath = args.Length > 1 ? args[1] : null;
+                if (string.IsNullOrEmpty(docPath)) { Console.WriteLine("用法: audit <docxPath>"); return 2; }
+                int a = DiagAudit.Run(env, docPath);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return a;
+            }
+            if (filter == "charclass")
+            {
+                int cc = DiagCharClass.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return cc;
+            }
+            if (filter == "fbdisplay")
+            {
+                int fails = DiagFloatDisplay.Run(env);
+                try { app.Quit(); app.Dispose(); } catch { }
+                return fails;
+            }
             if (filter == "golden")
             {
                 DiagGolden.Run(env);

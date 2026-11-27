@@ -13,6 +13,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
     <PackageReference Include="xunit" Version="2.*" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    <!-- xunit.runner.visualstudio 2.8.x 的适配器依赖此程序集；net48 目标下不会被自动带入，
+         缺失时报"未能从 …testadapter.dll 加载扩展 / 没有可用测试"（不是测试失败，是跑不起来） -->
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -7,3 +7,23 @@ out/
 *.png
 TestResults/
 dist/
+
+# 验收套件运行产物（AGENTS.md 规则 6：不进 git）
+tests/output/
+# Word 锁文件 / 临时文件
+~$*
+
+# 一次性排障脚本与调试输出（排障时的临时产物，不进 git）
+debug.log
+tools/verify-close-*.ps1
+tools/verify-coord-*.ps1
+tools/verify-position*.ps1
+tools/diagnose-*.ps1
+tools/shot-*.ps1
+
+# 个人真实材料（公开仓库，绝不入库）：考察报告/入党材料等含真实姓名与身份信息
+tests/考察报告-*.docx
+tests/首都经济贸易大学*.docx
+tests/第二十六章*.docx
+tests/*- 副本.docx
+tests/*.pdf

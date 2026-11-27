@@ -74,7 +74,11 @@ namespace TypeRight.Addin.UI
                 // 采样改为 PrintWindow 抓宿主窗口自身（2026-11-07 根治）：屏幕 CopyFromScreen 在
                 // 宿主被遮挡/非前台时会采到别的窗口（回退链再读 Word 注册表 → WPS 亮色出深色条、
                 // Word 被遮挡时注册表键漂移出浅色条）。PrintWindow 与遮挡无关，永远采宿主自己的像素。
-                using (var cap = new System.Drawing.Bitmap(w, h))
+                //
+                // 性能（2026-11）：只抓顶部标题栏/选项卡那一条窄带，而不是整窗。
+                // 采样行最多到窗口高度 13%，整窗抓取纯属浪费——实测整窗 174ms vs 窄带 ~30ms。
+                int stripH = Math.Max(80, Math.Min(h, (int)(h * 0.16)));
+                using (var cap = new System.Drawing.Bitmap(w, stripH))
                 using (var gc = System.Drawing.Graphics.FromImage(cap))
                 {
                     IntPtr hdc = gc.GetHdc();
@@ -86,6 +90,8 @@ namespace TypeRight.Addin.UI
                     foreach (double rowFrac in new[] { 0.03, 0.07, 0.13 })
                     {
                         int y = (int)(h * rowFrac);
+                        if (y >= stripH) y = stripH - 1;      // 窄带内夹住
+                        if (y < 0) continue;
                         var buckets = new Dictionary<int, int>();
                         for (int fx = 0; fx < 12; fx++)
                         {
@@ -208,6 +214,10 @@ namespace TypeRight.Addin.UI
         public Color InputBg, InputBorder, Hover, Pressed, Accent, AccentHover;
         public Color PopupBg, PopupBorder, ItemHover, Separator, Disabled;
 
+        /// <summary>状态色：成功 / 错误。必须随主题变化——
+        /// 深色底上用 #C0392B 这种深红几乎看不见，深色主题要换成更亮的红。</summary>
+        public Color Success, Danger;
+
         /// <summary>黑色主题：Word 深色 Fluent——中性灰阶、隐边框、唯一蓝强调（2026-11 换皮对齐宿主原生）。</summary>
         public static ThemePalette Dark()
         {
@@ -228,6 +238,9 @@ namespace TypeRight.Addin.UI
                 ItemHover = C(0x42, 0x42, 0x4A),
                 Separator = C(0x3A, 0x3A, 0x3F),
                 Disabled = C(0x77, 0x77, 0x7D),
+                // 深色底：亮一档的红/绿才看得清（深红 #C0392B 在黑底上几乎不可读）
+                Success = C(0x6E, 0xCB, 0x8A),
+                Danger = C(0xF2, 0x8B, 0x82),
             };
         }
 
@@ -251,6 +264,8 @@ namespace TypeRight.Addin.UI
                 ItemHover = C(0x55, 0x55, 0x5F),
                 Separator = C(0x55, 0x55, 0x5C),
                 Disabled = C(0x9E, 0x9E, 0xA6),
+                Success = C(0x7E, 0xD3, 0x9B),
+                Danger = C(0xF2, 0x94, 0x8C),
             };
         }
 
@@ -274,6 +289,9 @@ namespace TypeRight.Addin.UI
                 ItemHover = C(0xE8, 0xF1, 0xFB),
                 Separator = C(0xEA, 0xEA, 0xEA),
                 Disabled = C(0xA6, 0xA6, 0xA6),
+                // 浅色底：沿用原有深红 / 深绿，白底上对比度足够
+                Success = C(0x2F, 0x85, 0x5A),
+                Danger = C(0xC0, 0x39, 0x2B),
             };
         }
 

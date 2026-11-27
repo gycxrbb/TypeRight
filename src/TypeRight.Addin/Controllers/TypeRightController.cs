@@ -22,6 +22,9 @@ namespace TypeRight.Addin.Controllers
         public int SampleOffset;
         /// <summary>样本段落的原始签名（应用格式前采集，方案规则用它匹配）。</summary>
         public FormatSignature SampleSignature;
+        /// <summary>浮条显示用的签名：格式模式 = SampleSignature；
+        /// 文本同类模式没有格式签名，取首个命中处的实际格式（用户要知道"这段现在是什么字体字号"）。</summary>
+        public FormatSignature DisplaySignature;
         /// <summary>样本是否引导句单元。</summary>
         public bool SampleIsLead;
         /// <summary>样本段落是否在表格内（正文/表格分区，按表格区间位置判定）。</summary>
@@ -29,6 +32,11 @@ namespace TypeRight.Addin.Controllers
         public FormatSignature.IgnoreDims Ignore;
         /// <summary>命中单元（引导句感知）：高亮与格式应用都作用于单元区间。</summary>
         public List<MatchUnit> MatchedUnits = new List<MatchUnit>();
+        /// <summary>本会话的"目标字符类型"：只对该类型的字符高亮/改格式，段内其他类型保持原样。
+        /// None = 不做字符类型过滤（旧行为，整段刷）。
+        /// 取值来源：用户光标/选区落在哪个字符上——点汉字就只动汉字，点数字就只动数字
+        /// （用户 2026-11 口径："汉字归汉字、数字归数字"）。</summary>
+        public CharClass TargetClass = CharClass.None;
         public SimilarSelector.HighlightSession Highlights;
         /// <summary>文本同类模式（字义匹配）：单元=文本出现处而非格式段落；忽略维度等开关不适用。</summary>
         public bool TextMode;
@@ -42,6 +50,8 @@ namespace TypeRight.Addin.Controllers
         public FormatSignature SampleSignature;
         public FormatSignature.IgnoreDims Ignore;
         public FormatChanges Applied;
+        /// <summary>样本是否在表格内（方案规则要区分正文/表格两个文本域）。</summary>
+        public bool SampleInTable;
     }
 
     /// <summary>
@@ -126,6 +136,7 @@ namespace TypeRight.Addin.Controllers
         /// <summary>入口：光标段落（或选区首段）为样本，匹配全文同类。</summary>
         public void SimilarSelect()
         {
+            var swAll = System.Diagnostics.Stopwatch.StartNew();
             TypeRightAddin.Log("SimilarSelect: enter");
             try
             {
@@ -160,6 +171,20 @@ namespace TypeRight.Addin.Controllers
                 int sampleOffset = 0;
                 try { sampleOffset = Math.Max(0, App.Selection.Range.Start - sample.Range.Start); } catch { }
 
+                // 目标字符类型 = 用户点中/选中的那个字符的类型。
+                // 点汉字 → 只动汉字（日期里的数字保持原样）；点数字 → 只动数字。
+                // 落到标点/空白上（None）时退回不过滤，避免"点了逗号就什么都选不到"。
+                CharClass target = CharClass.None;
+                try
+                {
+                    Range sel = App.Selection.Range;
+                    int probeStart = Math.Max(sample.Range.Start, Math.Min(sel.Start, sample.Range.End - 1));
+                    string probeText = doc.Range(probeStart, Math.Min(probeStart + 1, sample.Range.End)).Text ?? "";
+                    if (probeText.Length > 0) target = CharClassDetector.ClassOf(probeText[0]);
+                }
+                catch { }
+                TypeRightAddin.Log("同类选择: 目标字符类型=" + CharClassDetector.Name(target));
+
                 _session = new SelectSession
                 {
                     Doc = doc,
@@ -167,10 +192,13 @@ namespace TypeRight.Addin.Controllers
                     SampleParagraph = sample,
                     SampleOffset = sampleOffset,
                     SampleSignature = sig,
+                    DisplaySignature = sig,
+                    TargetClass = target,
                     SampleInTable = SimilarSelector.IsInTable(doc, sample),
                     Ignore = _settings.StrictByDefault ? FormatSignature.IgnoreDims.None : FormatSignature.IgnoreDims.None,
                     Highlights = new SimilarSelector.HighlightSession(doc)
                 };
+                long tSession = swAll.ElapsedMilliseconds;
 
                 if (!string.Equals(_opsDocFullName, _session.DocFullName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -180,7 +208,13 @@ namespace TypeRight.Addin.Controllers
                 }
 
                 RecomputeMatches();
+                long tMatch = swAll.ElapsedMilliseconds;
                 ShowFloatBar(sample);
+                long tBar = swAll.ElapsedMilliseconds;
+                // 保留一条汇总：pre=关旧会话 session=建会话 match=匹配(含高亮排队) bar=浮条弹出
+                // 高亮已异步，所以 match 段里不再包含 500ms 染色时间
+                TypeRightAddin.Log("SimilarSelect: " + _lastMatchCount + " 处 · 匹配 " + (tMatch - tSession)
+                    + "ms · 浮条 " + (tBar - tMatch) + "ms · 合计 " + tBar + "ms");
             }
             catch (Exception ex)
             {
@@ -189,16 +223,65 @@ namespace TypeRight.Addin.Controllers
             }
         }
 
-        /// <summary>把命中单元集标为黄色高亮（格式/文本两种模式共用；一个撤销记录 + 关屏幕刷新）。</summary>
-        private void ApplySessionHighlights(UnitMatchResult result)
+        /// <summary>读某个命中单元区间的实际格式（浮条显示用：字体 + 中文字号）。
+        /// 失败返回空签名——浮条按"未知"显示 —，绝不让 0 漏到界面。</summary>
+        private static FormatSignature ReadUnitDisplaySignature(Document doc, MatchUnit unit)
+        {
+            try
+            {
+                if (unit == null || doc == null) return default(FormatSignature);
+                int end = unit.End > unit.Start ? unit.End : unit.Start + 1;
+                return FormatSignatureReader.ReadRange(doc.Range(unit.Start, end));
+            }
+            catch { return default(FormatSignature); }
+        }
+
+        /// <summary>把高亮排到消息循环低优先级队列执行（不阻塞"同类选择"的可见反馈）。
+        /// 与 ApplySessionHighlights 的区别只有时机：内容完全一致，仍在同一个 UndoRecord 内。
+        ///
+        /// 注意：COM 加载项里 System.Windows.Application.Current 通常为 null（没有 WPF Application
+        /// 实例，只有 Word 的 STA 线程跑着 WPF 窗口），所以不能用 Application.Current.Dispatcher
+        /// —— 那样会掉进同步回退分支，把 500ms 高亮重新塞回点击路径。用浮条自身的 Dispatcher。</summary>
+        private void QueueHighlight(UnitMatchResult result)
         {
             if (_session == null || _session.Highlights == null) return;
+            var sessionSnapshot = _session;
+
+            System.Windows.Threading.Dispatcher dispatcher = null;
+            try { if (_floatBar != null) dispatcher = _floatBar.Dispatcher; } catch { }
+            if (dispatcher == null)
+            {
+                try { dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher; } catch { }
+            }
+            if (dispatcher == null) { ApplySessionHighlights(result); return; }
+
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                // 排队期间会话可能已被用户关掉/换掉 —— 用快照比对，不做过期高亮
+                if (!ReferenceEquals(_session, sessionSnapshot)) return;
+                // 会话没变但已经被新的匹配替换了命中集 → 这次排队的高亮已过期，跳过
+                if (!ReferenceEquals(sessionSnapshot.MatchedUnits, result.Units)) return;
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                ApplySessionHighlights(result, sessionSnapshot);
+                TypeRightAddin.Log(string.Format("高亮应用（延迟）: {0} 处 / 合并成 {1} 段 / {2:0}ms",
+                    result.Count, sessionSnapshot.Highlights.LastRunCount,
+                    (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0
+                        / System.Diagnostics.Stopwatch.Frequency));
+            }), System.Windows.Threading.DispatcherPriority.Background);
+        }
+
+        /// <summary>把命中单元集标为黄色高亮（格式/文本两种模式共用；一个撤销记录 + 关屏幕刷新）。
+        /// explicitSession：异步调用时传快照，避免读到已被替换的 _session。</summary>
+        private void ApplySessionHighlights(UnitMatchResult result, SelectSession explicitSession = null)
+        {
+            SelectSession session = explicitSession ?? _session;
+            if (session == null || session.Highlights == null) return;
             try
             {
                 var undo = WordCompat.BeginUndo(App, "TypeRight 匹配标记");
                 bool screenOff = false;
                 try { App.ScreenUpdating = false; screenOff = true; } catch { }
-                try { _session.Highlights.ApplyUnits(result); }
+                try { session.Highlights.ApplyUnits(result, session.TargetClass); }
                 finally
                 {
                     WordCompat.EndUndo(undo);
@@ -214,7 +297,11 @@ namespace TypeRight.Addin.Controllers
             if (_session == null) return;
             var result = SimilarSelector.MatchUnits(_session.Doc, _session.SampleParagraph, _session.SampleOffset, _session.Ignore);
             _session.MatchedUnits = result.Units;
-            if (!result.SampleSignature.IsEmpty) _session.SampleSignature = result.SampleSignature;
+            if (!result.SampleSignature.IsEmpty)
+            {
+                _session.SampleSignature = result.SampleSignature;
+                _session.DisplaySignature = result.SampleSignature;   // 浮条显示跟随样本真值（引导句感知）
+            }
             _session.SampleIsLead = result.SampleIsLead;
 
             TypeRightAddin.Log(string.Format("同类匹配: {0} 处 / {1}ms（进程内） ignore={2} 样本单元={3}",
@@ -240,16 +327,19 @@ namespace TypeRight.Addin.Controllers
                 catch { }
             }
 
-            // 高亮包成一个撤销记录，避免刷屏 Ctrl+Z 栈；批量写期间关屏幕刷新防闪烁卡顿
-            ApplySessionHighlights(result);
-
+            // 高亮：先弹浮条让用户马上看到反馈，高亮随后在消息循环里补上。
+            // 43 处命中 = 86 次 COM 往返 ≈ 500ms（实测 4.5ms/往返），同步做会让点击发顿。
+            // 把"高亮"从用户可见的关键路径上挪走：浮条立刻出现，黄标在 ~0ms 后跟上
+            // （同一 UI 线程排队执行，用户看到的是"先弹条、再染色"，感知延迟从 500ms 降到 ~0）。
             _lastMatchCount = result.Count;
             _lastMatchDuration = result.Duration;
             if (_floatBar != null)
             {
                 _floatBar.UpdateMatched(result.Count, result.Duration, result.SampleIsLead);
-                _floatBar.UpdateSampleInfo(result.SampleSignature);
+                _floatBar.UpdateSampleInfo(_session != null ? _session.DisplaySignature : result.SampleSignature);
             }
+
+            QueueHighlight(result);
 
             // 命中摘要：现场诊断"为什么被判同类"（样本签名 + 命中单元签名对比）
             try
@@ -262,6 +352,7 @@ namespace TypeRight.Addin.Controllers
                 TypeRightAddin.Log("  [命中摘要] sample=" + result.SampleSignature + summary);
             }
             catch { }
+
         }
 
         /// <summary>浮动条：忽略维度变化（PRD：实时重算）。</summary>
@@ -305,6 +396,8 @@ namespace TypeRight.Addin.Controllers
                     MatchedUnits = units,
                     Highlights = new SimilarSelector.HighlightSession(doc)
                 };
+                // 文本模式显示首个命中处的真实字体字号（不是格式签名——这里不按格式匹配）
+                _session.DisplaySignature = ReadUnitDisplaySignature(doc, units[0]);
                 ApplySessionHighlights(new UnitMatchResult { Units = _session.MatchedUnits });
                 _lastMatchCount = units.Count;
                 _lastMatchDuration = TimeSpan.FromMilliseconds(0);
@@ -472,13 +565,15 @@ namespace TypeRight.Addin.Controllers
             try
             {
                 var stats = BatchFormatter.ApplyUnits(App, _session.Doc, _session.MatchedUnits, changes,
-                    "同类格式（" + _session.MatchedUnits.Count + " 处）");
+                    "同类格式（" + _session.MatchedUnits.Count + " 处）",
+                    onlyClass: _session.TargetClass);
 
                 _docOps.Add(new OpRecord
                 {
                     SampleSignature = _session.SampleSignature,   // 原始签名：回放时按它匹配
                     Ignore = _session.Ignore,
-                    Applied = changes
+                    Applied = changes,
+                    SampleInTable = _session.SampleInTable
                 });
                 TypeRightAddin.Log("ApplyChanges: " + _session.MatchedUnits.Count + " 处，实际改动 " + stats.Changed);
             }
@@ -506,10 +601,37 @@ namespace TypeRight.Addin.Controllers
             }
             if (_floatBar != null) _floatBar.HideBar();
 
-            if (offerSave && !_saveOffered && _docOps.Count >= 2)
+            if (offerSave && !_saveOffered && _docOps.Count >= 1)
             {
+                // 门槛从「>= 2 次操作」降到 1 次：最常见的用法就是"选中同类正文 → 只调一下字号"，
+                // 一次改动就该能存。旧门槛让这条最主流的路径永远等不到提示（2026-11 实测）。
                 _saveOffered = true;
-                ShowToast("这次操作可以存为方案，下份同类文档一键完成。", "存为方案", () => OpenProfiles(saveMode: true));
+                string what = DescribePendingOps();
+                ShowToast("刚才把" + what + "。存成方案，下次点一下就还原。", "存为方案",
+                    () => OpenProfiles(saveMode: true));
+            }
+        }
+
+        /// <summary>把本次待存的操作说成人话（Toast 用），例如「正文里 13 段的字号 四号 → 三号」。
+        /// 用户要知道自己存的到底是什么，否则不会点那个按钮。</summary>
+        private string DescribePendingOps()
+        {
+            try
+            {
+                OpRecord last = _docOps[_docOps.Count - 1];
+                string where = last.SampleInTable ? "表格里" : "正文里";
+                string change = ProfileDescriber.DescribeChange(
+                    ToMatchSpec(last.SampleSignature, last.Ignore, last.SampleInTable),
+                    ToApplySpec(last.Applied));
+
+                string head = where + " " + _lastMatchCount + " 段的";
+                if (_docOps.Count > 1)
+                    return head + "格式（" + _docOps.Count + " 处修改）";
+                return head + (change ?? "格式改了");
+            }
+            catch
+            {
+                return "同类段落的格式";
             }
         }
 
@@ -626,44 +748,62 @@ namespace TypeRight.Addin.Controllers
 
         // ───────────────────────── P1-1 方案 ─────────────────────────
 
-        /// <summary>把本次文档的操作沉淀为方案。</summary>
+        /// <summary>把本次文档的操作沉淀为方案。返回落盘文件的完整路径。
+        /// 同名/同 id 不覆盖已有方案：自动避让成 -2、-3（要覆盖原方案请用面板里的「重命名」，
+        /// 而不是再存一次）。</summary>
         public string SaveProfile(string name, bool withCatchAll, string catchAllFont, bool convertFormulas)
         {
+            ProfileV2 profile = BuildPendingProfile(name, withCatchAll, catchAllFont, convertFormulas);
+            if (profile == null) return null;
+
+            var store = new ProfileStoreV2(_settings.ProfilesDirectory);
+            profile.Id = ProfileId.MakeUnique(name,
+                id => System.IO.File.Exists(System.IO.Path.Combine(store.Directory, id + ".json")));
+            return store.Save(profile);
+        }
+
+        /// <summary>把当前待存的操作组装成 ProfileV2（不落盘）。
+        /// 「另存为」窗口用它把"这次改了什么"先摆给用户看，确认后再真的保存。</summary>
+        public ProfileV2 BuildPendingProfile(string name, bool withCatchAll, string catchAllFont, bool convertFormulas)
+        {
             if (_docOps.Count == 0) return null;
+
             var profile = new ProfileV2
             {
-                Id = MakeId(name),
+                Id = ProfileId.Make(name),
                 Name = name,
                 ConvertFormulas = convertFormulas,
                 Rules = new List<ProfileRule>()
             };
 
             int order = 1;
+            var rawRules = new List<ProfileRule>();
             foreach (OpRecord op in _docOps)
             {
-                profile.Rules.Add(new ProfileRule
+                rawRules.Add(new ProfileRule
                 {
                     Order = order++,
-                    Match = ToMatchSpec(op.SampleSignature, op.Ignore),
+                    Match = ToMatchSpec(op.SampleSignature, op.Ignore, op.SampleInTable),
                     Apply = ToApplySpec(op.Applied)
                 });
             }
+            // 同一次会话里连着改字体→字号→加粗，会产生若干条 match 完全相同的规则。
+            // 回放是「每段只被首条命中规则处理」，不合并的话后面几条命中 0 段，用户改的字号就被吞了。
+            profile.Rules = OpNormalizer.Normalize(rawRules);
+
             if (withCatchAll && !string.IsNullOrEmpty(catchAllFont))
             {
                 profile.Rules.Add(new ProfileRule
                 {
-                    Order = order++,
+                    Order = profile.Rules.Count + 1,
                     Match = new MatchSpec { CatchAll = true },
                     Apply = new ApplySpec { EastAsiaFont = catchAllFont, LatinFont = _settings.DefaultLatinFont }
                 });
             }
-
-            var store = new ProfileStoreV2(_settings.ProfilesDirectory);
-            store.Save(profile);
-            return store.Directory;
+            return profile;
         }
 
-        private static MatchSpec ToMatchSpec(FormatSignature sig, FormatSignature.IgnoreDims ignore)
+        private static MatchSpec ToMatchSpec(FormatSignature sig, FormatSignature.IgnoreDims ignore, bool sampleInTable)
         {
             var spec = new MatchSpec
             {
@@ -678,6 +818,7 @@ namespace TypeRight.Addin.Controllers
             if ((ignore & FormatSignature.IgnoreDims.Color) != 0) spec.Ignore.Add("color");
             if ((ignore & FormatSignature.IgnoreDims.Bold) != 0) spec.Ignore.Add("bold");
             if (spec.Ignore.Count == 0) spec.Ignore = null;
+            spec.InTable = sampleInTable;
             return spec;
         }
 
@@ -693,91 +834,72 @@ namespace TypeRight.Addin.Controllers
             };
         }
 
-        /// <summary>应用方案：按序执行规则（每段只被首条命中规则处理）+ 兜底 + 公式，整程一个撤销单元。</summary>
+        /// <summary>应用方案：委托 ProfileApplier（与验收测试共用同一实现）。
+        ///
+        /// 这里原先有一份内联的重复实现，与 ProfileApplier 已经不一致：内联版没有
+        /// "已应用态识别"，导致方案对同一文档应用第二次时，末尾兜底规则会把前面已经
+        /// 格式化好的段落再刷一遍——PRD 要求的「应用两次第二次 0 改动」在这条路径上不成立。
+        /// 现在只保留一份真值。</summary>
         public void ApplyProfile(ProfileV2 profile)
         {
             Document doc = ActiveDocument();
             if (doc == null) { ShowToast("请先打开一个文档"); return; }
             CloseSession(offerSave: false);
 
-            var report = new List<string>();
-            var consumed = new HashSet<int>();
-            List<int[]> mathZones = SimilarSelector.MathZoneRanges(doc);   // 公式区感知（公式化过的文档方案回放不再错配）
-
-            bool screenOff = false;
-            try { App.ScreenUpdating = false; screenOff = true; } catch { }
-            var undo = WordCompat.BeginUndo(App, "应用方案「" + profile.Name + "」");
             try
             {
-                foreach (ProfileRule rule in profile.Rules.OrderBy(r => r.Order))
-                {
-                    var hit = new List<Paragraph>();
-                    Paragraphs paragraphs = doc.Paragraphs;
-                    int count = paragraphs.Count;
-                    for (int i = 1; i <= count; i++)
-                    {
-                        Paragraph p = null;
-                        try { p = paragraphs[i]; } catch { continue; }
-                        if (p == null) continue;
-                        int key;
-                        try { key = p.Range.Start; } catch { continue; }
-                        if (consumed.Contains(key)) continue;
-                        var sig = FormatSignatureReader.Read(p, mathZones);
-                        if (sig.IsEmpty) continue;
-                        if (rule.Match.MatchesPara(sig)) hit.Add(p);
-                    }
-
-                    if (hit.Count > 0)
-                    {
-                        foreach (Paragraph p in hit)
-                        {
-                            try { consumed.Add(p.Range.Start); } catch { }
-                        }
-                        var changes = new FormatChanges
-                        {
-                            EastAsiaFont = rule.Apply.EastAsiaFont,
-                            LatinFont = rule.Apply.LatinFont,
-                            SizePt = rule.Apply.SizePt,
-                            Bold = rule.Apply.Bold,
-                            ColorRgb = ParseColor(rule.Apply.Color)
-                        };
-                        BatchFormatter.Apply(App, doc, hit, changes, null, wrapUndo: false);
-                    }
-                    report.Add(string.Format("规则{0}{1}命中 {2} 段", rule.Order,
-                        rule.Match.CatchAll == true ? "（其余段落）" : " ", hit.Count));
-                }
-
-                if (profile.ConvertFormulas)
-                {
-                    var converter = new FormulaConverter(doc, null, FormulaConverter.ResolveMml2OmmlPath(App));
-                    FormulaStats stats = converter.ConvertDocument();
-                    report.Add("公式 " + stats.Converted + " 处" + (stats.Failed > 0 ? "（失败 " + stats.Failed + " 处已保留）" : ""));
-                }
+                ProfileApplyReport result = ProfileApplier.Apply(App, doc, profile);
+                // 面向用户说人话："规则1" 这类内部编号换成人话描述
+                string text = BuildApplyToast(profile, result);
+                ShowToast(text, 8000);
+                TypeRightAddin.Log("ApplyProfile[" + profile.Name + "]: " + string.Join("; ", result.Lines));
             }
-            finally
+            catch (Exception ex)
             {
-                WordCompat.EndUndo(undo);
-                if (screenOff) { try { App.ScreenUpdating = true; } catch { } }
+                TypeRightAddin.Log("ApplyProfile: " + ex);
+                ShowToast("应用方案失败：" + ex.Message, 7000);
             }
+        }
 
-            int unmatched = 0;
-            try
+        /// <summary>应用结果 → 人话提示（"规则1命中 8 段" 用户看不懂，换成方案卡片同一套描述）。</summary>
+        private static string BuildApplyToast(ProfileV2 profile, ProfileApplyReport report)
+        {
+            var parts = new List<string>();
+            ProfileSummary summary = ProfileDescriber.Describe(profile);
+            for (int i = 0; i < summary.Rules.Count; i++)
             {
-                foreach (Paragraph p in WordCompat.ParagraphsOf(doc))
+                RuleSummary rs = summary.Rules[i];
+                // report.Lines 与规则一一对应（公式行在末尾，不参与）
+                if (i < report.Lines.Count)
                 {
-                    try
-                    {
-                        var sig = FormatSignatureReader.Read(p, mathZones);
-                        if (!sig.IsEmpty && !consumed.Contains(p.Range.Start)) unmatched++;
-                    }
-                    catch { }
+                    string line = report.Lines[i];
+                    int hit = ExtractIntAfter(line, "命中 ");
+                    string who = rs.IsCatchAll ? "其余段落" : rs.MatchText;
+                    parts.Add(who + "：" + (rs.ChangeText ?? "格式已统一")
+                        + (hit >= 0 ? "（" + hit + " 段）" : ""));
                 }
             }
-            catch { }
-            report.Add("未命中 " + unmatched + " 段（未改动）。");
+            if (profile.ConvertFormulas)
+                parts.Add("公式 " + report.FormulaConverted + " 处");
 
-            ShowToast(string.Join(" ｜ ", report), 8000);
-            TypeRightAddin.Log("ApplyProfile[" + profile.Name + "]: " + string.Join("; ", report));
+            string head = "已应用「" + profile.Name + "」：";
+            string body = string.Join("；", parts.ToArray());
+            string tail = report.Unmatched > 0 ? "　另有 " + report.Unmatched + " 段未匹配任何规则，未改动。" : "";
+            return head + body + tail;
+        }
+
+        /// <summary>从报告行里抠出 "命中 N 段" 的 N；取不到返回 -1。</summary>
+        private static int ExtractIntAfter(string line, string marker)
+        {
+            if (string.IsNullOrEmpty(line)) return -1;
+            int at = line.IndexOf(marker, StringComparison.Ordinal);
+            if (at < 0) return -1;
+            int i = at + marker.Length;
+            int start = i;
+            while (i < line.Length && char.IsDigit(line[i])) i++;
+            if (i == start) return -1;
+            int v;
+            return int.TryParse(line.Substring(start, i - start), out v) ? v : -1;
         }
 
         private static int? ParseColor(string hex)
@@ -790,20 +912,30 @@ namespace TypeRight.Addin.Controllers
 
         private void ShowFloatBar(Paragraph sample)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             if (_floatBar == null)
             {
                 _floatBar = new FloatBar(this);
                 _floatBar.SetFonts(FontListProvider.GetFontList());
             }
+            long tCtor = sw.ElapsedMilliseconds;
             _addin.RefreshRibbonTheme();   // 宿主主题变化 → 刷新功能区图标配色
+            long tTheme = sw.ElapsedMilliseconds;
             _floatBar.PositionNear(App, sample);
+            long tPos = sw.ElapsedMilliseconds;
             _floatBar.ShowBar();
+            long tShow = sw.ElapsedMilliseconds;
+            TypeRightAddin.Log("ShowFloatBar 分段: ctor=" + tCtor + " theme=" + (tTheme - tCtor)
+                + " pos=" + (tPos - tTheme) + " show=" + (tShow - tPos) + " total=" + tShow + "ms");
             // 首次会话浮条是刚创建的（RecomputeMatches 时还不存在），用会话里的真值补刷计数
             if (_session != null)
             {
                 _floatBar.UpdateMatched(_lastMatchCount, _lastMatchDuration, _session != null && _session.SampleIsLead);
-                _floatBar.UpdateSampleInfo(_session.SampleSignature);
+                _floatBar.UpdateSampleInfo(_session.DisplaySignature);
+                if (_session.TextMode)
+                    _floatBar.SetTextMode(_session.TextPattern, _lastMatchCount, _session.TextExcludeNegation);
             }
+            TypeRightAddin.Log("ShowFloatBar 全部完成: " + sw.ElapsedMilliseconds + "ms");
         }
 
         /// <summary>空闲时预建浮条（隐藏）：把 WPF 窗口初始化 + 字体列表装载
@@ -813,6 +945,13 @@ namespace TypeRight.Addin.Controllers
             if (_floatBar != null) return;
             try
             {
+                // ⚠️ 不要在这里调 SetThreadDpiAwarenessContext（曾经加过，已移除）。
+                // 实测后果：Word 的 UI 线程被切到 PerMonitorV2，而浮条窗口是在进程级
+                // System-DPI aware 上下文里创建的 → 窗口的**视觉位置**与**鼠标命中区**错位。
+                // 用户表现：看到 ✕ 在那里，正正点击没反应；必须先让鼠标划过让 WPF 产生
+                // hover 高亮（说明鼠标其实进了另一个位置），才能点中。
+                // 该 API 对 .NET Framework 4.8 的 WPF 本来就不生效（窗口尺寸不变），
+                // 唯一效果就是制造上面这个错位——所以彻底不用。
                 _floatBar = new FloatBar(this);
                 _floatBar.SetFonts(FontListProvider.GetFontList());
                 TypeRightAddin.Log("PrewarmFloatBar: ok");
@@ -822,6 +961,54 @@ namespace TypeRight.Addin.Controllers
                 TypeRightAddin.Log("PrewarmFloatBar: " + ex.Message);
                 try { if (_floatBar != null) { _floatBar.Close(); _floatBar = null; } } catch { }
             }
+        }
+
+        /// <summary>自动化验证：模拟在浮条字号框手输（返回显示快照）。</summary>
+        public string TypeSizeInFloatBar(string text)
+        {
+            if (_floatBar == null) return "(no bar)";
+            try { return _floatBar.AutomationTypeSize(text); }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
+        }
+
+        /// <summary>自动化验证：模拟在浮条字体框手输（返回显示快照）。</summary>
+        public string TypeFontInFloatBar(string text)
+        {
+            if (_floatBar == null) return "(no bar)";
+            try { return _floatBar.AutomationTypeFont(text); }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
+        }
+
+        /// <summary>自动化验证：✕ 按钮的物理坐标（命中区标定用）。</summary>
+        public string GetCloseButtonPhysical()
+        {
+            if (_floatBar == null) return "(no bar)";
+            try { return _floatBar.ProbeCloseButtonPhysical(); }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
+        }
+
+        /// <summary>自动化验证：标定 WPF Left/Top ↔ 物理矩形的映射（坐标系诊断用）。</summary>
+        public string ProbeFloatBarCoords(double left, double top)
+        {
+            if (_floatBar == null) return "(no bar)";
+            try { return _floatBar.ProbeCoordinateMapping(left, top); }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
+        }
+
+        /// <summary>自动化验证：读浮条关闭按钮的屏幕坐标（真机点击测试用）。</summary>
+        public string GetFloatBarCloseProbe()
+        {
+            if (_floatBar == null) return "(no bar)";
+            try { return _floatBar.GetCloseButtonProbe(); }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
+        }
+
+        /// <summary>自动化验证：读回悬浮条当前显示的字体/字号文本（"宋体|四号"）。</summary>
+        public string GetFloatBarDisplaySnapshot()
+        {
+            if (_floatBar == null) return "(no bar)";
+            try { return _floatBar.GetDisplaySnapshot(); }
+            catch (Exception ex) { return "(error: " + ex.Message + ")"; }
         }
 
         /// <summary>自动化验证：ShowActivated=false 重显悬浮条（后台无前台权时不触发失焦隐藏）。</summary>
@@ -861,10 +1048,31 @@ namespace TypeRight.Addin.Controllers
             _toast.Show(App, message, actionLabel, action, durationMs);
         }
 
+        /// <summary>打开方案窗口。saveMode=true → 只负责"存刚才那次改动"；
+        /// false → 只负责"挑一个用到当前文档"。两个语境分窗，不再混在一屏。</summary>
         public void OpenProfiles(bool saveMode = false)
         {
-            var win = new ProfilesWindow(this, saveMode);
-            win.Show();
+            try
+            {
+                if (saveMode)
+                {
+                    if (_docOps.Count == 0)
+                    {
+                        ShowToast("还没有可保存的排版操作。先用「同类选择」调整一处格式再回来。", 6000);
+                        return;
+                    }
+                    new SaveProfileWindow(this).Show();
+                }
+                else
+                {
+                    new ProfileManagerWindow(this).Show();
+                }
+            }
+            catch (Exception ex)
+            {
+                TypeRightAddin.Log("OpenProfiles: " + ex);
+                ShowToast("打开方案窗口失败：" + ex.Message);
+            }
         }
 
         public void OpenSettings()
@@ -1003,19 +1211,6 @@ namespace TypeRight.Addin.Controllers
         {
             try { return doc.FullName; }
             catch { return null; }
-        }
-
-        private static string MakeId(string name)
-        {
-            var sb = new System.Text.StringBuilder();
-            bool lastDash = false;
-            foreach (char c in (name ?? "profile").Trim())
-            {
-                if (char.IsLetterOrDigit(c) || c == '-') { sb.Append(c); lastDash = false; }
-                else if (!lastDash) { sb.Append('-'); lastDash = true; }
-            }
-            string id = sb.ToString().Trim('-').ToLowerInvariant();
-            return id.Length > 0 ? id : "profile";
         }
 
         public void Shutdown()

@@ -42,7 +42,26 @@
 - 强调色（当前跳转处底纹）：柔和 4 色（蜜橙/天蓝/薄荷/淡紫），与命中黄高亮协调，WPS 兜底青
 - 动效：弹层 Fade 150ms 级；无装饰动效（Operate 纪律）
 
+## 窗口主题化（所有独立窗口的强制约束）
+
+> 2026-11 事故：方案窗口把 `Background` 写死 `Brushes.White`，而文字色取自宿主深色主题的浅色令牌
+> → 浅字落白底，主标题直接"消失"。根因不是某个色值错，而是**没有统一的主题消费机制**。
+
+规则：
+
+1. **所有窗口继承 `ThemedWindow`**（`src/TypeRight.Addin/UI/ThemedWindow.cs`），不再各自手搓颜色
+2. 颜色唯一真值 = `ThemePalette`（`OfficeTheme.cs`，15+2 项 × 3 主题）；窗口只消费，不定义
+3. 前景/背景一律 `UseResource(el, prop, "XxxBrush")` 或 XAML `{DynamicResource XxxBrush}`，
+   **不写 `new SolidColorBrush(P.xxx)`**——那是静态快照，宿主切主题不会跟随
+4. 窗口背景取 `PanelBrush`，卡片取 `InputBgBrush`；**禁止 `Brushes.White` 做窗口底**
+5. 状态色分主题：`Success` / `Danger` 在深色主题下换亮档（深红 `#C0392B` 在黑底上不可读）
+6. 子窗口重写 `ResolveApp()` 交出真实 `Application`，否则主题检测只能靠 `FindWindow` 兜底
+
+回归保护：`tests/TypeRight.Core.Tests/UiThemeTests.cs` 对三套主题逐项断言 WCAG 对比度
+（主文字 vs 窗口底 ≥ 4.5，次级/强调/状态色 ≥ 3.0）。改调色板若破坏可读性，测试直接失败。
+
 ## 已知边界
 
 - PrintWindow 截图对分层窗口有青色伪影——像素取证判 G/B 通道（见 tools/ui-verify.ps1）
 - 高 DPI 下 WPF DIP 渲染一致；Word/WPS 主题检测失败时回退 Light
+- 主题检测按 **宿主（Word/WPS）主题**走，不是 Windows 系统深浅色——两者可以不同

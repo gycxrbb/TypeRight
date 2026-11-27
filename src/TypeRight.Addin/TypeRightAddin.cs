@@ -281,12 +281,15 @@ namespace TypeRight.Addin
             }
         }
 
-        /// <summary>宿主主题变化时刷新功能区图标配色（悬浮条每次打开时调用）。</summary>
+        /// <summary>宿主主题变化时刷新功能区图标配色（悬浮条每次打开时调用）。
+        /// 性能：主题检测 = PrintWindow 抓整窗，实测 ~174ms/次；这里每次浮条打开都 force 重测
+        /// 会让"同类选择"明显发顿。改用 OfficeTheme 自带的短缓存（非 force），
+        /// 只有真的变了才 Invalidate 功能区——用户几乎感知不到，但省掉整窗抓取。</summary>
         public void RefreshRibbonTheme()
         {
             try
             {
-                UI.OfficeThemeKind now = UI.OfficeTheme.Detect(Application, force: true);
+                UI.OfficeThemeKind now = UI.OfficeTheme.Detect(Application);
                 if (_iconTheme.HasValue && _iconTheme.Value != now && _ribbon != null)
                     _ribbon.Invalidate();
             }
@@ -460,6 +463,98 @@ namespace TypeRight.Addin
                 }
                 catch (Exception ex) { Log("AutomationShowFloatBar: " + ex.Message); }
             });
+        }
+
+        /// <summary>自动化专用：读回悬浮条显示的字体/字号文本（"宋体|四号"）。
+        /// 跨线程取值必须回到 Word UI 线程（浮条是 WPF，跨线程读控件属性会抛异常）。</summary>
+        public string AutomationFloatBarDisplay()
+        {
+            string result = "";
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { result = Controller.GetFloatBarDisplaySnapshot(); }
+                catch (Exception ex) { result = "(error: " + ex.Message + ")"; }
+                finally { done.Set(); }
+            });
+            // 等 UI 线程回填；超时返回占位，绝不让验证脚本挂死
+            if (!done.Wait(3000)) return "(timeout)";
+            return result;
+        }
+
+        /// <summary>自动化专用：模拟在浮条字号框手输并回车（验证打字录入链路）。</summary>
+        public string AutomationTypeSize(string text)
+        {
+            string result = "(timeout)";
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { result = Controller.TypeSizeInFloatBar(text); }
+                catch (Exception ex) { result = "(error: " + ex.Message + ")"; }
+                finally { done.Set(); }
+            });
+            if (!done.Wait(3000)) return "(timeout)";
+            return result;
+        }
+
+        /// <summary>自动化专用：模拟在浮条字体框手输并回车。</summary>
+        public string AutomationTypeFont(string text)
+        {
+            string result = "(timeout)";
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { result = Controller.TypeFontInFloatBar(text); }
+                catch (Exception ex) { result = "(error: " + ex.Message + ")"; }
+                finally { done.Set(); }
+            });
+            if (!done.Wait(3000)) return "(timeout)";
+            return result;
+        }
+
+        /// <summary>自动化专用：✕ 按钮的物理坐标（命中区标定）。</summary>
+        public string AutomationClosePhysical()
+        {
+            string result = "(timeout)";
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { result = Controller.GetCloseButtonPhysical(); }
+                catch (Exception ex) { result = "(error: " + ex.Message + ")"; }
+                finally { done.Set(); }
+            });
+            if (!done.Wait(3000)) return "(timeout)";
+            return result;
+        }
+
+        /// <summary>自动化专用：标定 WPF 坐标 → 物理矩形（坐标系诊断）。</summary>
+        public string AutomationProbeCoords(double left, double top)
+        {
+            string result = "(timeout)";
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { result = Controller.ProbeFloatBarCoords(left, top); }
+                catch (Exception ex) { result = "(error: " + ex.Message + ")"; }
+                finally { done.Set(); }
+            });
+            if (!done.Wait(3000)) return "(timeout)";
+            return result;
+        }
+
+        /// <summary>自动化专用：读浮条关闭按钮的屏幕坐标（供真机点击测试定位）。</summary>
+        public string AutomationCloseProbe()
+        {
+            string result = "(timeout)";
+            var done = new System.Threading.ManualResetEventSlim(false);
+            QueueOnWordUiThread(() =>
+            {
+                try { result = Controller.GetFloatBarCloseProbe(); }
+                catch (Exception ex) { result = "(error: " + ex.Message + ")"; }
+                finally { done.Set(); }
+            });
+            if (!done.Wait(3000)) return "(timeout)";
+            return result;
         }
 
         private void QueueOnWordUiThread(Action action, uint delayMs = 10)

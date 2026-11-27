@@ -33,6 +33,12 @@ namespace TypeRight.Signature
         public int LastBoldRaw;
         public int LastColorRgb;
 
+        /// <summary>单元的主导字符类型（2026-11 新增维度）。
+        /// 解决：文档把数字/字母也设成同一字体字号后，纯数字段、纯字母段与中文正文段
+        /// 在字体/字号/加粗/颜色全同的情况下互相判为同类（实测 10 组两两命中）。
+        /// None = 未采集（旧调用点/读取失败）—— 按"未知"处理，不与任何值相等。</summary>
+        public CharClass CharClass;
+
         /// <summary>中段采样锚点（段落可见区间 25%/50%/75% 三个位置）。
         /// 双锚点对"首尾相同、中间不同"的两个家族无能为力（用户实测命中），
         /// 中段采样补盲区。null（未提供）与 null 相等；null 与非 null 不等（严格）。</summary>
@@ -69,13 +75,14 @@ namespace TypeRight.Signature
 
         public override string ToString()
         {
-            string head = string.Format("{0}/{1} {2}pt B={3} #{4} I={5} {6}",
+            string head = string.Format("{0}/{1} {2}pt B={3} #{4} I={5} {6} 字符={7}",
                 EastAsiaFont ?? "?", LatinFont ?? "?",
                 double.IsNaN(SizePt) ? "?" : SizePt.ToString("0.#"),
                 BoldRaw == -1 ? 1 : (BoldRaw == 0 ? 0 : -1),
                 ColorRgb < 0 ? "自动" : ColorRgb.ToString("X6"),
                 ItalicRaw,
-                Alignment);
+                Alignment,
+                CharClassDetector.Name(CharClass));
             if (IsUniform && MiddleUniform()) return head;
             string tail = IsUniform ? "" : string.Format(" ⇄尾 {0}/{1} {2}pt B={3} #{4}",
                 LastEastAsiaFont ?? "?", LastLatinFont ?? "?",
@@ -164,22 +171,24 @@ namespace TypeRight.Signature
             }
         }
 
-        /// <summary>首锚部分匹配（引导句候选预筛）：仅比首锚的字体/字号/加粗/颜色。</summary>
+        /// <summary>首锚部分匹配（引导句候选预筛）：仅比首锚的字体/字号/加粗/颜色（+字符类型）。</summary>
         public bool FirstAnchorMatches(FormatSignature other, IgnoreDims ignore)
         {
             if (!FontEquals(EastAsiaFont, other.EastAsiaFont)) return false;
             if (!FontEquals(LatinFont, other.LatinFont)) return false;
+            if ((ignore & IgnoreDims.CharClass) == 0 && !CharClassEquals(CharClass, other.CharClass)) return false;
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(SizePt, other.SizePt)) return false;
             if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(BoldRaw, other.BoldRaw)) return false;
             if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(ColorRgb, other.ColorRgb)) return false;
             return true;
         }
 
-        /// <summary>尾锚部分匹配（正文候选预筛）：仅比尾锚的字体/字号/加粗/颜色。</summary>
+        /// <summary>尾锚部分匹配（正文候选预筛）：仅比尾锚的字体/字号/加粗/颜色（+字符类型）。</summary>
         public bool LastAnchorMatches(FormatSignature other, IgnoreDims ignore)
         {
             if (!FontEquals(LastEastAsiaFont, other.LastEastAsiaFont)) return false;
             if (!FontEquals(LastLatinFont, other.LastLatinFont)) return false;
+            if ((ignore & IgnoreDims.CharClass) == 0 && !CharClassEquals(CharClass, other.CharClass)) return false;
             if ((ignore & IgnoreDims.SizePt) == 0 && !SizePtEquals(LastSizePt, other.LastSizePt)) return false;
             if ((ignore & IgnoreDims.Bold) == 0 && !BoldEquals(LastBoldRaw, other.LastBoldRaw)) return false;
             if ((ignore & IgnoreDims.Color) == 0 && !ColorEquals(LastColorRgb, other.LastColorRgb)) return false;
@@ -194,7 +203,21 @@ namespace TypeRight.Signature
             None = 0,
             SizePt = 1,
             Color = 2,
-            Bold = 4
+            Bold = 4,
+            /// <summary>忽略"主导字符类型"维度（中文/数字/字母）。
+            /// 严格模式下该维度**参与**比对；宽松模式可勾选忽略。</summary>
+            CharClass = 8
+        }
+
+        /// <summary>字符类型维度比对。语义：
+        /// · 任一方 None（未采集/读取失败）→ **放行**。未知不该成为"不同类"的理由，
+        ///   否则旧调用点与读取抖动会造成漏命中（与字号/加粗的"未知不相等"不同：
+        ///   那些是数值抖动，这里是"这一维根本没采"）。
+        /// · 双方都有值 → 必须相等。</summary>
+        private static bool CharClassEquals(CharClass a, CharClass b)
+        {
+            if (a == CharClass.None || b == CharClass.None) return true;
+            return a == b;
         }
 
         /// <summary>
@@ -208,6 +231,8 @@ namespace TypeRight.Signature
             if (!FontEquals(LatinFont, other.LatinFont)) return false;
             if (!FontEquals(LastEastAsiaFont, other.LastEastAsiaFont)) return false;
             if (!FontEquals(LastLatinFont, other.LastLatinFont)) return false;
+            // 主导字符类型（严格模式生效；宽松模式可勾"忽略字符类型"）
+            if ((ignore & IgnoreDims.CharClass) == 0 && !CharClassEquals(CharClass, other.CharClass)) return false;
             if ((ignore & IgnoreDims.SizePt) == 0 &&
                 (!SizePtEquals(SizePt, other.SizePt) || !SizePtEquals(LastSizePt, other.LastSizePt))) return false;
             if ((ignore & IgnoreDims.Bold) == 0 &&
@@ -263,7 +288,9 @@ namespace TypeRight.Signature
                 {
                     SizePt = double.NaN, ColorRgb = -1,
                     LastSizePt = double.NaN, LastBoldRaw = WordFormatUtils.UndefinedInt, LastColorRgb = -1,
-                    Alignment = "l"
+                    Alignment = "l",
+                    // 单元区间的主导字符类型（跳过公式区：公式化前后必须稳定，见 TextOutsideMathZones）
+                    CharClass = CharClassDetector.Detect(TextOutsideMathZones(text, basePos, mathZones))
                 };
                 Document doc = range.Document;
 
@@ -330,10 +357,42 @@ namespace TypeRight.Signature
             return false;
         }
 
+        /// <summary>
+        /// 取「公式区之外」的可见文本，供主导字符类型判定使用。
+        ///
+        /// 为什么必须剔除公式区（2026-11 真机验收 TC-21 暴露）：
+        /// 公式转换会把段落里的 `x1`、`Δ`、`2a` 这类**数字/字母**变成 OMML 公式对象，
+        /// 它们随即从 Range.Text 里消失。若 CharClass 直接按整段文本统计，
+        /// 同一段落在公式化前后会从 Mixed/Digit 变成 Cjk —— 签名变了，同族命中随之退化
+        /// （实测 43 → 37，6 段掉出）。
+        ///
+        /// 这与既有的「公式区感知」原则一致：公式区内的字体读数不可信，锚点也要跳过它；
+        /// 字符类型同样不该由公式内部的字符决定。公式化前后 CharClass 应当稳定。
+        /// </summary>
+        public static string TextOutsideMathZones(string text, int start, List<int[]> mathZones)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (mathZones == null || mathZones.Count == 0) return text;
+
+            // 常见情况：整段无公式交叠 → 直接返回原串，零拷贝
+            bool anyInside = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (InMathZone(mathZones, start + i)) { anyInside = true; break; }
+            }
+            if (!anyInside) return text;
+
+            var sb = new System.Text.StringBuilder(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (!InMathZone(mathZones, start + i)) sb.Append(text[i]);
+            }
+            return sb.ToString();
+        }
+
         /// <summary>把位置推进到公式区之后（连续多区跳完为止）。</summary>
         internal static int SkipMathForward(List<int[]> zones, int pos)
-        {
-            if (zones == null) return pos;
+        {            if (zones == null) return pos;
             bool moved = true;
             int guard = 0;
             while (moved && guard++ < 16)
@@ -472,6 +531,7 @@ namespace TypeRight.Signature
                 sig.BoldRaw = ReadBoldStable(f);
                 sig.ItalicRaw = ItalicOfParagraph(probe, f.Italic, mathZones);
                 sig.ColorRgb = WordFormatUtils.WdColorToRgb((int)f.Color);
+                sig.CharClass = CharClassDetector.Detect(TextOutsideMathZones(text, start, mathZones));   // 主导字符类型（纯字符串运算，零 COM 成本）
                 Range lastChar = FindLastVisibleCharRange(probe, mathZones);
                 ReadLastAnchor(lastChar, ref sig);        // 尾锚点；单可见字符段回填为首锚点（均匀）
                 ReadExtraAnchors(probe, lastChar, start, text, offset, ref sig, mathZones);   // 中段 25/50/75% 采样
