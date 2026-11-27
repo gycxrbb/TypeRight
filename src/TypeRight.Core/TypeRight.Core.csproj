@@ -5,7 +5,7 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>TypeRight</RootNamespace>
     <AssemblyName>TypeRight.Core</AssemblyName>
-    <Version>0.6.0</Version>
+    <Version>0.6.1</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
   </PropertyGroup>
